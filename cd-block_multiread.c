@@ -55,7 +55,7 @@ cd_block_multiple_sectors_read(uint32_t fad, uint32_t number, uint8_t *output_bu
 
             while (num > 0)
             {
-                ret = cd_block_transfer_data(0, 0, out_buffer);
+                ret = cd_block_transfer_data(0, 0, out_buffer,2048);
 
                 if (ret == 0)
                 {
@@ -119,7 +119,7 @@ cd_block_sector_read_process(uint8_t *output_buffer)
         while ((cd_block_cmd_get_sector_number(0)) == 0) {
         }
 
-        if ((ret = cd_block_transfer_data(0, 0, output_buffer)) != 0) {
+        if ((ret = cd_block_transfer_data(0, 0, output_buffer,2048)) != 0) {
                 return ret;
         }
 
@@ -134,7 +134,7 @@ cd_block_sector_read_flush(uint8_t *output_buffer)
 
         /* If at least one sector has transferred, we copy it */
         while ((cd_block_cmd_get_sector_number(0)) != 0) {
-                cd_block_transfer_data(0, 0, output_buffer);
+                cd_block_transfer_data(0, 0, output_buffer,2048);
         }
 
         return 0;
