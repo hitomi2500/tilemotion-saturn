@@ -19,6 +19,7 @@ static iso9660_filelist_t _filelist;
 static iso9660_filelist_entry_t _filelist_entries[ISO9660_FILELIST_ENTRIES_COUNT];
 iso9660_filelist_entry_t *file_entry;
 static int _video_file_fad;
+static int _video_file_size;
 static int _last_used_fad;
 static int _last_used_offset;
 
@@ -63,36 +64,36 @@ main(void)
         vdp2_vram_cycp_t vram_cycp;
 
         vram_cycp.pt[0].t0 = VDP2_VRAM_CYCP_PNDR_NBG0;
-        vram_cycp.pt[0].t1 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[0].t2 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[0].t3 = VDP2_VRAM_CYCP_NO_ACCESS;
+        vram_cycp.pt[0].t1 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[0].t2 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[0].t3 = VDP2_VRAM_CYCP_PNDR_NBG0;
         vram_cycp.pt[0].t4 = VDP2_VRAM_CYCP_CHPNDR_NBG0;
         vram_cycp.pt[0].t5 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[0].t6 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[0].t7 = VDP2_VRAM_CYCP_NO_ACCESS;
 
         vram_cycp.pt[1].t0 = VDP2_VRAM_CYCP_PNDR_NBG0;
-        vram_cycp.pt[1].t1 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[1].t2 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[1].t3 = VDP2_VRAM_CYCP_NO_ACCESS;
+        vram_cycp.pt[1].t1 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[1].t2 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[1].t3 = VDP2_VRAM_CYCP_PNDR_NBG0;
         vram_cycp.pt[1].t4 = VDP2_VRAM_CYCP_CHPNDR_NBG0;
         vram_cycp.pt[1].t5 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[1].t6 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[1].t7 = VDP2_VRAM_CYCP_NO_ACCESS;
 
         vram_cycp.pt[2].t0 = VDP2_VRAM_CYCP_PNDR_NBG0;
-        vram_cycp.pt[2].t1 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[2].t2 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[2].t3 = VDP2_VRAM_CYCP_NO_ACCESS;
+        vram_cycp.pt[2].t1 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[2].t2 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[2].t3 = VDP2_VRAM_CYCP_PNDR_NBG0;
         vram_cycp.pt[2].t4 = VDP2_VRAM_CYCP_CHPNDR_NBG0;
         vram_cycp.pt[2].t5 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[2].t6 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[2].t7 = VDP2_VRAM_CYCP_NO_ACCESS;
 
         vram_cycp.pt[3].t0 = VDP2_VRAM_CYCP_PNDR_NBG0;
-        vram_cycp.pt[3].t1 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[3].t2 = VDP2_VRAM_CYCP_NO_ACCESS;
-        vram_cycp.pt[3].t3 = VDP2_VRAM_CYCP_NO_ACCESS;
+        vram_cycp.pt[3].t1 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[3].t2 = VDP2_VRAM_CYCP_PNDR_NBG0;
+        vram_cycp.pt[3].t3 = VDP2_VRAM_CYCP_PNDR_NBG0;
         vram_cycp.pt[3].t4 = VDP2_VRAM_CYCP_CHPNDR_NBG0;
         vram_cycp.pt[3].t5 = VDP2_VRAM_CYCP_NO_ACCESS;
         vram_cycp.pt[3].t6 = VDP2_VRAM_CYCP_NO_ACCESS;
@@ -115,14 +116,8 @@ main(void)
         vdp_sync();
 
         _prepare_video();
-        //vdp_sync();
-		/*for (int i=0;i<263;i++)
-		{
-			_play_video_frame();
-			vdp_sync();
-		}*/
 
-        _video_fifo_read = 0;//VIDEO_FIFO_SIZE-1;
+        _video_fifo_read = 0;
         _video_fifo_write = 0;
         _video_fifo_number_of_entries = 0;
         _cd_read_pending = 0;
@@ -251,6 +246,7 @@ _prepare_video(void)
                 if (strcmp(file_entry->name, "V001.GTY") == 0)
                 {
                         _video_file_fad = file_entry->starting_fad;
+                        _video_file_size = file_entry->size;
                 }
         }
         assert(_video_file_fad > 0);
@@ -266,27 +262,18 @@ _prepare_video(void)
         int blocks_for_tiles = (_tiles_number) / 64 + 1;
         uint8_t * _tiles_data = malloc(blocks_for_tiles * 2048);
         //reading
-        cd_block_multiple_sectors_read(_video_file_fad+1, blocks_for_tiles, _tiles_data);
+        cd_block_sectors_read(_video_file_fad+1,_tiles_data, ISO9660_SECTOR_SIZE*blocks_for_tiles);
         //copying to VRAM
         memcpy((void*)(VDP2_VRAM_TILES_START_0),_tiles_data,_tiles_number*32);
         _last_used_fad = _video_file_fad + blocks_for_tiles;
 
-        /*
-	//reading palettes now 128 palettes of 16x4 bytes = 8192 bytes = 4 blocks
-        cd_block_multiple_sectors_read(_last_used_fad+1, 4, _tiles_data);
-        _last_used_fad += 4;
-        //ecncoding to CRAM
-        uint16_t color16;
-        uint16_t * pCRAM = (uint16_t*)(VDP2_VRAM_ADDR(8,0));
-        for (int i=0;i<2048;i++)
-        {
-                color16 = COLOR_RGB_DATA | COLOR_RGB888_TO_RGB555(_tiles_data[i*4],_tiles_data[i*4+1],_tiles_data[i*4+2]);
-                pCRAM[i] = color16;
-        }*/
-		_last_used_offset = 511;
+        _last_used_offset = 511;
 
         //releasing
         free(_tiles_data);
+
+        //requesting entire video file
+        cd_block_multiple_sector_read_request(_last_used_fad+1,_video_file_size/ISO9660_SECTOR_SIZE-blocks_for_tiles+1);
 }
 
 void
@@ -410,7 +397,7 @@ _fill_video_fifo(void)
         {
                 //if no access was pending, do a read access
                 _last_used_fad++;
-                cd_block_sector_read_request(_last_used_fad);
+                //cd_block_sector_read_request(_last_used_fad);
                 _last_used_fad+=19;
                 //cd_block_sector_read(_last_used_fad, fifo_frame_8);
                 _cd_read_pending = 20;
