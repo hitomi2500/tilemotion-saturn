@@ -7,7 +7,7 @@
 
 #include <yaul.h>
 #include <stdlib.h>
-#include <cd-block_multiread.h>
+#include <svin_cd_access.h>
 
 #define VDP2_VRAM_NAMES_START_0  VDP2_VRAM_ADDR(0, 0x00000)
 #define VDP2_VRAM_NAMES_START_1  VDP2_VRAM_ADDR(2, 0x00000)
@@ -113,7 +113,7 @@ main(void)
             VDP2_TVMD_VERT_224);
         vdp2_tvmd_display_set();
 
-        vdp_sync();
+        vdp2_sync();
 
         _prepare_video();
 
@@ -146,7 +146,7 @@ user_init(void)
             COLOR_RGB1555(1, 0, 0, 7));
 
 
-        vdp_sync_vblank_out_set(_vblank_out_handler);
+        vdp_sync_vblank_out_set(_vblank_out_handler,NULL);
 
         cpu_intc_mask_set(0);
 
@@ -254,7 +254,7 @@ _prepare_video(void)
         //allocating temporary buf for 1 sector
         uint16_t *tmp_sector_16 = (uint16_t *)tmp_sector;  
         //reading 1st block to find out number of blocks
-        cd_block_sector_read(_video_file_fad, tmp_sector);
+        _svin_cd_block_sector_read(_video_file_fad, tmp_sector);
         //getting number of tiles
         int _tiles_number = tmp_sector_16[0];
         //allocating array for background pack index
@@ -262,7 +262,7 @@ _prepare_video(void)
         int blocks_for_tiles = (_tiles_number) / 64 + 1;
         uint8_t * _tiles_data = malloc(blocks_for_tiles * 2048);
         //reading
-        cd_block_sectors_read(_video_file_fad+1,_tiles_data, ISO9660_SECTOR_SIZE*blocks_for_tiles);
+        _svin_cd_block_sectors_read(_video_file_fad+1,_tiles_data, ISO9660_SECTOR_SIZE*blocks_for_tiles);
         //copying to VRAM
         memcpy((void*)(VDP2_VRAM_TILES_START_0),_tiles_data,_tiles_number*32);
         _last_used_fad = _video_file_fad + blocks_for_tiles;
@@ -273,7 +273,7 @@ _prepare_video(void)
         free(_tiles_data);
 
         //requesting entire video file
-        cd_block_multiple_sector_read_request(_last_used_fad+1,_video_file_size/ISO9660_SECTOR_SIZE-blocks_for_tiles+1);
+        _svin_cd_block_sectors_read_request(_last_used_fad+1,_video_file_size/ISO9660_SECTOR_SIZE-blocks_for_tiles+1);
 }
 
 void
@@ -289,7 +289,7 @@ _play_video_frame(void)
         int iPaletteNumber = 0;
 	//uint16_t color16;
 	uint16_t * pCRAM = (uint16_t*)(VDP2_VRAM_ADDR(8,0));
-        
+
         int iTileX = 0;
 	int iTileY = 0;
         while (iTileY<25)
@@ -375,7 +375,6 @@ _play_video_frame(void)
                         }
                 }
         }
-
 }
 
 void
@@ -407,7 +406,10 @@ _fill_video_fifo(void)
                 fifo_frame_8 = (uint8_t *)&_video_fifo[_video_fifo_write_test*2048]; 
                 //if (true == cd_block_sector_read_check())
                 {
-                        cd_block_sector_read_process(fifo_frame_8);
+                        while (0 != _svin_cd_block_sector_read_process(fifo_frame_8))
+                                ;
+                        //memcpy((uint8_t *)LWRAM(0),fifo_frame_8,2048);
+                        //assert(0);
                         _video_fifo_write = _video_fifo_write_test;
                         _video_fifo_number_of_entries++;
                         _cd_read_pending--;

@@ -7,7 +7,7 @@ include $(YAUL_INSTALL_ROOT)/share/pre.common.mk
 SH_PROGRAM:= tilemotion
 SH_SRCS:= \
 	tilemotion.c \
-	cd-block_multiread.c
+	svin_cd_access.c
 
 SH_LIBRARIES:=
 SH_CFLAGS+= -O2 -I. -save-temps=obj
