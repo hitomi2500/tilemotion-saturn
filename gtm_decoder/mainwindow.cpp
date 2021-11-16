@@ -4,8 +4,10 @@
 #include <QPainter>
 #include <QPicture>
 
-#define CANVAS_X 352
-#define CANVAS_Y 200
+//#define CANVAS_X 352
+//#define CANVAS_Y 200
+#define CANVAS_X 704
+#define CANVAS_Y 448
 
 QRgb me_canvas[CANVAS_X][CANVAS_Y];
 
@@ -58,12 +60,35 @@ int16_t _get_short_from_bytearray(QByteArray * b, int index)
     return i;
 }
 
+//binary format:
+// 1st few blocks are a metaheader: contains a number of blocks in file and a type of each one
+// types :
+// 00 - tiles data
+// 01 - commands data
+// 00 - tiles data
+// 00 - tiles data
+
 void MainWindow::on_pushButton_clicked()
 {
-    QFile in_file("input.gtu");
-    QFile out_file("output.gty");
-    in_file.open(QIODevice::ReadOnly);
+    QFile out_file("V001.GTY");
     out_file.open(QIODevice::WriteOnly|QIODevice::Truncate);
+
+    ProcessChunk("ba.tmv0");
+
+    //write outfile header
+    uint8_t c;
+    c = Tiles.size()>>8;
+    out_file.write(QByteArray(1,c));
+    c = Tiles.size();
+    out_file.write(QByteArray(1,c));
+    out_file.write(QByteArray(2046,0));
+}
+
+
+void ProcessChunk(QString filename)
+{
+    QFile in_file(filename);
+    in_file.open(QIODevice::ReadOnly);
     QByteArray _gtm_header = in_file.read(40);
     int32_t _full_header_size = _get_int_from_bytearray(&_gtm_header,2*4);
     int32_t _keyframes = _get_int_from_bytearray(&_gtm_header,6*4);
@@ -225,14 +250,16 @@ void MainWindow::on_pushButton_clicked()
 
             //c = iMirrorFlags<<6;
             //out_file.write(QByteArray(1,c));
+
             c = iCurrentPalette;
             out_file.write(QByteArray(1,c));
-            c = (iCurrentTile+0x100)>>8;
+            c = (iCurrentTile+0x400)>>8;  //was 0x100 for lowres
             out_file.write(QByteArray(1,c));
             c = iCurrentTile;
             out_file.write(QByteArray(1,c));
-            if (iCurrentTile!= 0)
-                c++;
+            //if (iCurrentTile!= 0)
+            //  c++;
+
             //move to next X,Y
             for (int i=0;i<=0;i++)
             {
@@ -403,4 +430,3 @@ void MainWindow::on_pushButton_clicked()
     out_file.close();
 
 }
-
