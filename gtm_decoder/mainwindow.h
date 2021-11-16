@@ -7,6 +7,12 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+struct Block_Type{
+    int chunk;
+    int block;
+    int type;
+} ;
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -21,6 +27,9 @@ private slots:
 
 private:
     Ui::MainWindow *ui;
+    QList<QByteArray> Tile_Streams;
+    QList<QByteArray> Command_Streams;
+    QList<Block_Type> Blocks_Streams;
 };
 
 #endif // MAINWINDOW_H
