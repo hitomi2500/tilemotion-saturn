@@ -84,71 +84,94 @@ void MainWindow::on_pushButton_clicked()
 {
     Tile_Streams.clear();
     Command_Streams.clear();
+    Command_Streams_Part1.clear();
+    Command_Streams_Part2.clear();
     Blocks_Streams.clear();
+    Block_Type *b;
 
     QFile out_file("V001.GTY");
     out_file.open(QIODevice::WriteOnly|QIODevice::Truncate);
 
-    ProcessChunk("ba.tmv0");
-    ProcessChunk("ba.tmv1");
-    ProcessChunk("ba.tmv2");
-    ProcessChunk("ba.tmv3");
-    ProcessChunk("ba.tmv4");
-    ProcessChunk("ba.tmv5");
-    ProcessChunk("ba.tmv6");
-    ProcessChunk("ba.tmv7");
-    ProcessChunk("ba.tmv8");
-    ProcessChunk("ba.tmv9");
-    ProcessChunk("ba.tmv10");
-    ProcessChunk("ba.tmv11");
-    ProcessChunk("ba.tmv12");
-    ProcessChunk("ba.tmv13");
-    ProcessChunk("ba.tmv14");
-    ProcessChunk("ba.tmv15");
+    ProcessChunk("ba.tmv0",0);
+    ProcessChunk("ba.tmv1",1);
+    ProcessChunk("ba.tmv2",0);
+    ProcessChunk("ba.tmv3",1);
+    ProcessChunk("ba.tmv4",0);
+    ProcessChunk("ba.tmv5",1);
+    ProcessChunk("ba.tmv6",0);
+    ProcessChunk("ba.tmv7",1);
+    ProcessChunk("ba.tmv8",0);
+    ProcessChunk("ba.tmv9",1);
+    ProcessChunk("ba.tmv10",0);
+    ProcessChunk("ba.tmv11",1);
+    ProcessChunk("ba.tmv12",0);
+    ProcessChunk("ba.tmv13",1);
+    ProcessChunk("ba.tmv14",0);
+    ProcessChunk("ba.tmv15",1);
 
     //generating blocks muxing info first
     //first tiles go in unmuxed
     for (int i =0; i<Tile_Streams[0].size()/2048; i++)
     {
-        Block_Type *b = new Block_Type;
+        b = new Block_Type;
         b->chunk = 0;
         b->block = i;
         b->type = 0; //tiles
         Blocks_Streams.append(b[0]);
     }
+    /*b = new Block_Type;
+    b->chunk = 0;
+    b->block = 0;
+    b->type = 2; //switch
+    Blocks_Streams.append(b[0]);*/
     //now adding every block's commands along with current block's tiles
     for (int chunk = 0; chunk < 15; chunk++)
     {
-        int iCurrCommandsSize = Command_Streams.at(chunk).size()/2048;
+        //cmds part 1
+        for (int i =0; i<Command_Streams_Part1.at(chunk).size()/2048; i++)
+        {
+            b = new Block_Type;
+            b->chunk = chunk;
+            b->block = i;
+            b->type = 1+0x10*(chunk%2); //commands
+            Blocks_Streams.append(b[0]);
+        }
+        //interleave
+        int iCurrCommandsSize = Command_Streams_Part2.at(chunk).size()/2048;
         int iCurrTilesSize = Tile_Streams.at(chunk+1).size()/2048;
         int iTotal = iCurrCommandsSize * iCurrTilesSize;
         for (int i=0;i<iTotal;i++)
         {
             if (i % iCurrCommandsSize == 0)
             {
-                Block_Type *b = new Block_Type;
+                b = new Block_Type;
                 b->chunk = chunk+1;
                 b->block = i/iCurrCommandsSize;
-                b->type = 0; //tiles
+                b->type = 0+0x10*((chunk+1)%2); //tiles
                 Blocks_Streams.append(b[0]);
             }
             if (i % iCurrTilesSize == 0)
             {
-                Block_Type *b = new Block_Type;
+                b = new Block_Type;
                 b->chunk = chunk;
                 b->block = i/iCurrTilesSize;
-                b->type = 1; //commands
+                b->type = 1+0x10*(chunk%2); //commands
                 Blocks_Streams.append(b[0]);
             }
         }
+        /*b = new Block_Type;
+        b->chunk = 0;
+        b->block = 0;
+        b->type = 2; //switch
+        Blocks_Streams.append(b[0]);*/
     }
     //last chunk is only commands and no tiles
     for (int i =0; i<Command_Streams.last().size()/2048; i++)
     {
-        Block_Type *b = new Block_Type;
+        b = new Block_Type;
         b->chunk = Command_Streams.size()-1;
         b->block = i;
-        b->type = 1; //data
+        b->type = 1+0x10; //data
         Blocks_Streams.append(b[0]);
     }
 
@@ -178,7 +201,10 @@ void MainWindow::on_pushButton_clicked()
     //now adding every block's commands along with current block's tiles
     for (int chunk = 0; chunk < 15; chunk++)
     {
-        int iCurrCommandsSize = Command_Streams.at(chunk).size()/2048;
+        //cmds part 1
+        out_file.write(Command_Streams_Part1.at(chunk));
+        //interleave
+        int iCurrCommandsSize = Command_Streams_Part2.at(chunk).size()/2048;
         int iCurrTilesSize = Tile_Streams.at(chunk+1).size()/2048;
         int iTotal = iCurrCommandsSize * iCurrTilesSize;
         for (int i=0;i<iTotal;i++)
@@ -190,7 +216,7 @@ void MainWindow::on_pushButton_clicked()
             }
             if (i % iCurrTilesSize == 0)
             {
-                out_file.write(Command_Streams[chunk].mid((i/iCurrTilesSize)*2048,2048));
+                out_file.write(Command_Streams_Part2[chunk].mid((i/iCurrTilesSize)*2048,2048));
                 iWritten++;
             }
         }
@@ -203,7 +229,7 @@ void MainWindow::on_pushButton_clicked()
 }
 
 
-void MainWindow::ProcessChunk(QString filename)
+void MainWindow::ProcessChunk(QString filename, int framebuffer)
 {
     QFile in_file(filename);
     in_file.open(QIODevice::ReadOnly);
@@ -245,6 +271,10 @@ void MainWindow::ProcessChunk(QString filename)
     Tile_Streams.append(tiles_ba[0]);
     QByteArray *commands_ba = new QByteArray();
     Command_Streams.append(commands_ba[0]);
+    QByteArray *commands_ba1 = new QByteArray();
+    Command_Streams_Part1.append(commands_ba1[0]);
+    QByteArray *commands_ba2 = new QByteArray();
+    Command_Streams_Part2.append(commands_ba2[0]);
 
     uint8_t c;
     /*c = Tiles.size()>>8;
@@ -389,7 +419,10 @@ void MainWindow::ProcessChunk(QString filename)
             c = iCurrentPalette;
             //out_file.write(QByteArray(1,c));
             Command_Streams.last().append(1,c);
-            c = (iCurrentTile+0x400)>>8;  //was 0x100 for lowres
+            if (0==framebuffer)
+                c = (iCurrentTile+0x400)>>8;  //was 0x100 for lowres
+            else
+                c = (iCurrentTile+0x2400)>>8;  //was 0x100 for lowres
             //out_file.write(QByteArray(1,c));
             Command_Streams.last().append(1,c);
             c = iCurrentTile;
@@ -506,6 +539,15 @@ void MainWindow::ProcessChunk(QString filename)
             Palettes[iCurrentPalette].clear();
             Palettes[iCurrentPalette].append(_keyframe_data.mid(iParseIndex,Palette_Size*4));
             iParseIndex+=(Palette_Size*4);
+            //making sure palette does not cross 2048 sector border
+            if (Command_Streams.last().size()%2048 > 2028)
+            {
+                while (Command_Streams.last().size()%2048 != 0)
+                {
+                    Command_Streams.last().append(4,0xFA);
+                }
+            }
+
             //out_file.write(QByteArray(1,0x03));
             Command_Streams.last().append(1,0x03);
             //out_file.write(QByteArray(1,0x00));
@@ -582,7 +624,24 @@ void MainWindow::ProcessChunk(QString filename)
 
     //round up
     while (Command_Streams.last().size() % 2048 != 0) {
-        Command_Streams.last().append('\0');
+        Command_Streams.last().append(1,0xFA);
+    }
+
+    //divide into parts
+    if (Command_Streams.last().size()/2048 < 20)
+    {
+        //too small, not muxing at all
+        Command_Streams_Part1.last().clear();
+        Command_Streams_Part2.last().clear();
+        Command_Streams_Part1.last().append(Command_Streams.last());
+    }
+    else
+    {
+        //dividing into 2 parts for commands prebuffering first should not be muxed
+        Command_Streams_Part1.last().clear();
+        Command_Streams_Part2.last().clear();
+        Command_Streams_Part1.last().append(Command_Streams.last().left(2048*20));
+        Command_Streams_Part2.last().append(Command_Streams.last().mid(2048*20));
     }
 
     in_file.close();

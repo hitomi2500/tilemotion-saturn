@@ -20,7 +20,7 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-    void ProcessChunk(QString filename);
+    void ProcessChunk(QString filename, int framebuffer);
 
 private slots:
     void on_pushButton_clicked();
@@ -29,6 +29,8 @@ private:
     Ui::MainWindow *ui;
     QList<QByteArray> Tile_Streams;
     QList<QByteArray> Command_Streams;
+    QList<QByteArray> Command_Streams_Part1;
+    QList<QByteArray> Command_Streams_Part2;
     QList<Block_Type> Blocks_Streams;
 };
 
