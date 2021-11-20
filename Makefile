@@ -7,6 +7,7 @@ include $(YAUL_INSTALL_ROOT)/share/pre.common.mk
 SH_PROGRAM:= tilemotion
 SH_SRCS:= \
 	tilemotion.c \
+	svin_background.c \
 	svin_cd_access.c
 
 SH_LIBRARIES:=
