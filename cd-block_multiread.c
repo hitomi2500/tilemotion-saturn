@@ -6,7 +6,7 @@
 #define CD_STATUS_TIMEOUT 0xAA
 
 int
-cd_block_sector_read_request(uint32_t fad)
+_svin_cd_block_sector_read_request(uint32_t fad)
 {
         const int32_t num_sectors = 20;
 
@@ -14,20 +14,20 @@ cd_block_sector_read_request(uint32_t fad)
 
         int ret;
 
-        if ((ret = cd_block_cmd_set_sector_length(SECTOR_LENGTH_2048)) != 0) {
+        if ((ret = cd_block_cmd_sector_length_set(SECTOR_LENGTH_2048)) != 0) {
                 return ret;
         }
 
-        if ((ret = cd_block_cmd_reset_selector(0, 0)) != 0) {
+        if ((ret = cd_block_cmd_selector_reset(0, 0)) != 0) {
                 return ret;
         }
 
-        if ((ret = cd_block_cmd_set_cd_device_connection(0)) != 0) {
+        if ((ret = cd_block_cmd_cd_dev_connection_set(0)) != 0) {
                 return ret;
         }
 
         /* Start reading */
-        if ((ret = cd_block_cmd_play_disk(0, fad, num_sectors)) != 0) {
+        if ((ret = cd_block_cmd_disk_play(0, fad, num_sectors)) != 0) {
                 return ret;
         }
 
@@ -35,7 +35,7 @@ cd_block_sector_read_request(uint32_t fad)
 }
 
 int
-cd_block_multiple_sector_read_request(uint32_t fad, int sectors)
+_svin_cd_block_multiple_sector_read_request(uint32_t fad, int sectors)
 {
         const int32_t num_sectors = sectors;
 
@@ -43,20 +43,20 @@ cd_block_multiple_sector_read_request(uint32_t fad, int sectors)
 
         int ret;
 
-        if ((ret = cd_block_cmd_set_sector_length(SECTOR_LENGTH_2048)) != 0) {
+        if ((ret = cd_block_cmd_sector_length_set(SECTOR_LENGTH_2048)) != 0) {
                 return ret;
         }
 
-        if ((ret = cd_block_cmd_reset_selector(0, 0)) != 0) {
+        if ((ret = cd_block_cmd_selector_reset(0, 0)) != 0) {
                 return ret;
         }
 
-        if ((ret = cd_block_cmd_set_cd_device_connection(0)) != 0) {
+        if ((ret = cd_block_cmd_cd_dev_connection_set(0)) != 0) {
                 return ret;
         }
 
         /* Start reading */
-        if ((ret = cd_block_cmd_play_disk(0, fad, num_sectors)) != 0) {
+        if ((ret = cd_block_cmd_disk_play(0, fad, num_sectors)) != 0) {
                 return ret;
         }
 
@@ -64,14 +64,14 @@ cd_block_multiple_sector_read_request(uint32_t fad, int sectors)
 }
 
 int
-cd_block_sector_read_process(uint8_t *output_buffer)
+_svin_cd_block_sector_read_process(uint8_t *output_buffer)
 {
         assert(output_buffer != NULL);
 
         int ret;
 
         /* If at least one sector has transferred, we copy it */
-        while ((cd_block_cmd_get_sector_number(0)) == 0) {
+        while ((cd_block_cmd_sector_number_get(0)) == 0) {
         }
 
         if ((ret = cd_block_transfer_data(0, 0, output_buffer,2048)) != 0) {
@@ -83,12 +83,12 @@ cd_block_sector_read_process(uint8_t *output_buffer)
 
 
 int
-cd_block_sector_read_flush(uint8_t *output_buffer)
+_svin_cd_block_sector_read_flush(uint8_t *output_buffer)
 {
         assert(output_buffer != NULL);
 
         /* If at least one sector has transferred, we copy it */
-        while ((cd_block_cmd_get_sector_number(0)) != 0) {
+        while ((cd_block_cmd_sector_number_get(0)) != 0) {
                 cd_block_transfer_data(0, 0, output_buffer,2048);
         }
 
@@ -96,10 +96,10 @@ cd_block_sector_read_flush(uint8_t *output_buffer)
 }
 
 bool
-cd_block_sector_read_check(void)
+_svin_cd_block_sector_read_check(void)
 {
         /* If at least one sector has transferred, say yes */
-        if ((cd_block_cmd_get_sector_number(0)) != 0) {
+        if ((cd_block_cmd_sector_number_get(0)) != 0) {
                 return false;
         }
 

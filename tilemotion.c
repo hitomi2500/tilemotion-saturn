@@ -18,9 +18,9 @@
 #define VIDEO_X_SIZE 88
 #define VIDEO_Y_SIZE 56
 
-static iso9660_filelist_t _filelist;
-static iso9660_filelist_entry_t _filelist_entries[ISO9660_FILELIST_ENTRIES_COUNT];
-iso9660_filelist_entry_t *file_entry;
+static cdfs_filelist_t _filelist;
+static cdfs_filelist_entry_t _filelist_entries[CDFS_FILELIST_ENTRIES_COUNT];
+cdfs_filelist_entry_t *file_entry;
 static int _video_file_fad;
 static int _video_file_size;
 static int _last_used_fad;
@@ -28,7 +28,7 @@ static int _last_used_offset;
 
 static void _copy_character_pattern_data(const vdp2_scrn_cell_format_t *);
 static void _copy_color_palette(const vdp2_scrn_cell_format_t *);
-static void _copy_map(const vdp2_scrn_cell_format_t *);
+static void _copy_map(const vdp2_scrn_cell_format_t *, const vdp2_scrn_normal_map_t *);
 static void _prepare_video();
 static void _play_video_frame();
 static void _fill_video_fifo();
@@ -60,6 +60,9 @@ static int _total_frames_played = 0;
 
 static int _update_vdp1_flag = 0;
 
+#define _SVIN_SCREEN_WIDTH    704
+#define _SVIN_SCREEN_HEIGHT   448
+
 void _set_cycle_patterns_cpu()
 {
         uint16_t * pCYCP = (uint16_t*)0x25F80010;
@@ -86,6 +89,137 @@ void _set_cycle_patterns_nbg()
         pCYCP[7] = 0xFFFF;
 }
 
+void _svin_background_init()
+{
+    vdp1_cmdt_list_t *_svin_cmdt_list;
+    vdp2_sprite_priority_set(0, 4);
+    vdp2_sprite_priority_set(1, 4);
+    vdp2_sprite_priority_set(2, 4);
+    vdp2_sprite_priority_set(3, 4);
+    vdp2_sprite_priority_set(4, 4);
+    vdp2_sprite_priority_set(5, 4);
+    vdp2_sprite_priority_set(6, 4);
+    vdp2_sprite_priority_set(7, 4);
+
+    vdp2_tvmd_display_set();
+    vdp2_sync();
+
+    //-------------- setup VDP1 -------------------
+    _svin_cmdt_list = vdp1_cmdt_list_alloc(_SVIN_VDP1_ORDER_COUNT);
+
+    static const int16_vec2_t local_coord_ul =
+        INT16_VEC2_INITIALIZER(0,
+                               0);
+
+    static const vdp1_cmdt_draw_mode_t sprite_draw_mode = {
+        .raw = 0x0000,
+        .pre_clipping_disable = true};
+
+    assert(_svin_cmdt_list != NULL);
+
+    vdp1_cmdt_t *cmdts;
+    cmdts = &_svin_cmdt_list->cmdts[0];
+
+    (void)memset(&cmdts[0], 0x00, sizeof(vdp1_cmdt_t) * _SVIN_VDP1_ORDER_COUNT);
+
+    _svin_cmdt_list->count = _SVIN_VDP1_ORDER_COUNT;
+
+    vdp1_cmdt_normal_sprite_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_A0_INDEX]);
+    vdp1_cmdt_draw_mode_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_A0_INDEX], sprite_draw_mode);
+    vdp1_cmdt_normal_sprite_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_A1_INDEX]);
+    vdp1_cmdt_draw_mode_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_A1_INDEX], sprite_draw_mode);
+    vdp1_cmdt_normal_sprite_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_B0_INDEX]);
+    vdp1_cmdt_draw_mode_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_B0_INDEX], sprite_draw_mode);
+    vdp1_cmdt_normal_sprite_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_B1_INDEX]);
+    vdp1_cmdt_draw_mode_set(&cmdts[_SVIN_VDP1_ORDER_SPRITE_B1_INDEX], sprite_draw_mode);
+
+    vdp1_cmdt_system_clip_coord_set(&cmdts[_SVIN_VDP1_ORDER_SYSTEM_CLIP_COORDS_INDEX]);
+    vdp1_cmdt_jump_assign(&cmdts[_SVIN_VDP1_ORDER_SYSTEM_CLIP_COORDS_INDEX], _SVIN_VDP1_ORDER_LOCAL_COORDS_A_INDEX * 4);
+
+    vdp1_cmdt_local_coord_set(&cmdts[_SVIN_VDP1_ORDER_LOCAL_COORDS_A_INDEX]);
+    vdp1_cmdt_local_coord_set(&cmdts[_SVIN_VDP1_ORDER_LOCAL_COORDS_B_INDEX]);
+    vdp1_cmdt_vtx_local_coord_set(&cmdts[_SVIN_VDP1_ORDER_LOCAL_COORDS_A_INDEX], local_coord_ul);
+    vdp1_cmdt_vtx_local_coord_set(&cmdts[_SVIN_VDP1_ORDER_LOCAL_COORDS_B_INDEX], local_coord_ul);
+
+    vdp1_cmdt_end_set(&cmdts[_SVIN_VDP1_ORDER_DRAW_END_A_INDEX]);
+    vdp1_cmdt_end_set(&cmdts[_SVIN_VDP1_ORDER_DRAW_END_B_INDEX]);
+    #define VDP1_FBCR_DIE (0x0008)
+    MEMORY_WRITE(16, VDP1(FBCR), VDP1_FBCR_DIE);
+    
+    vdp1_vram_partitions_set(64,//VDP1_VRAM_DEFAULT_CMDT_COUNT,
+                              0x7F000, //  VDP1_VRAM_DEFAULT_TEXTURE_SIZE,
+                               0,//  VDP1_VRAM_DEFAULT_GOURAUD_COUNT,
+                               0);//  VDP1_VRAM_DEFAULT_CLUT_COUNT);
+
+            static vdp1_env_t vdp1_env = {
+                .erase_color = RGB1555(1, 0, 0, 0),
+                .erase_points[0] = {
+                        .x = 0,
+                        .y = 0
+                },
+                .erase_points[1] = {
+                        .x = _SVIN_SCREEN_WIDTH - 1,
+                        .y = _SVIN_SCREEN_HEIGHT -1
+                },
+                .bpp = VDP1_ENV_BPP_8,
+                .rotation = VDP1_ENV_ROTATION_0,
+                .color_mode = VDP1_ENV_COLOR_MODE_PALETTE,
+                .sprite_type = 0xC
+        };
+
+        vdp1_env_set(&vdp1_env);
+
+    vdp1_vram_partitions_t vdp1_vram_partitions;
+    vdp1_vram_partitions_get(&vdp1_vram_partitions);
+
+    vdp1_cmdt_color_bank_t dummy_bank;
+    dummy_bank.raw = 0;
+
+    vdp1_cmdt_t *cmdt_sprite;
+    cmdt_sprite = &cmdts[_SVIN_VDP1_ORDER_SPRITE_A0_INDEX];
+    cmdt_sprite->cmd_xa = 0;
+    cmdt_sprite->cmd_ya = 0;
+    cmdt_sprite->cmd_size = 0x2CE0;
+    cmdt_sprite->cmd_srca = ((int)vdp1_vram_partitions.texture_base-VDP1_VRAM(0) ) / 8;
+    vdp1_cmdt_color_mode4_set(cmdt_sprite, dummy_bank);
+    vdp1_cmdt_color_bank_set(cmdt_sprite, dummy_bank);
+    cmdt_sprite->cmd_pmod |= 0x08C0; //enabling ECD and SPD manually for now
+    cmdt_sprite = &cmdts[_SVIN_VDP1_ORDER_SPRITE_A1_INDEX];
+    cmdt_sprite->cmd_xa = 352;
+    cmdt_sprite->cmd_ya = 0;
+    cmdt_sprite->cmd_size = 0x2CE0;
+    cmdt_sprite->cmd_srca = ((int)vdp1_vram_partitions.texture_base - VDP1_VRAM(0) + _SVIN_SCREEN_WIDTH*_SVIN_SCREEN_HEIGHT/4 ) / 8;
+    vdp1_cmdt_color_mode4_set(cmdt_sprite, dummy_bank);
+    vdp1_cmdt_color_bank_set(cmdt_sprite, dummy_bank);
+    vdp1_cmdt_jump_assign(cmdt_sprite, _SVIN_VDP1_ORDER_DRAW_END_A_INDEX * 4);//skipping A2 and A3
+    cmdt_sprite->cmd_pmod |= 0x08C0; //enabling ECD and SPD manually for now
+    cmdt_sprite = &cmdts[_SVIN_VDP1_ORDER_SPRITE_B0_INDEX];
+    cmdt_sprite->cmd_xa = 0;
+    cmdt_sprite->cmd_ya = 0;
+    cmdt_sprite->cmd_size = 0x2CE0;
+    cmdt_sprite->cmd_srca = ((int)vdp1_vram_partitions.texture_base - VDP1_VRAM(0) + 2*_SVIN_SCREEN_WIDTH*_SVIN_SCREEN_HEIGHT/4 ) / 8;
+    vdp1_cmdt_color_mode4_set(cmdt_sprite, dummy_bank);
+    vdp1_cmdt_color_bank_set(cmdt_sprite, dummy_bank);
+    cmdt_sprite->cmd_pmod |= 0x08C0; //enabling ECD and SPD manually for now
+    cmdt_sprite = &cmdts[_SVIN_VDP1_ORDER_SPRITE_B1_INDEX];
+    cmdt_sprite->cmd_xa = 352;
+    cmdt_sprite->cmd_ya = 0;
+    cmdt_sprite->cmd_size = 0x2CE0;
+    cmdt_sprite->cmd_srca = ((int)vdp1_vram_partitions.texture_base - VDP1_VRAM(0) + 3*_SVIN_SCREEN_WIDTH*_SVIN_SCREEN_HEIGHT/4 ) / 8;
+    vdp1_cmdt_color_mode4_set(cmdt_sprite, dummy_bank);
+    vdp1_cmdt_color_bank_set(cmdt_sprite, dummy_bank);
+    vdp1_cmdt_jump_assign(cmdt_sprite, _SVIN_VDP1_ORDER_DRAW_END_B_INDEX * 4);//skipping B2 and B3
+    cmdt_sprite->cmd_pmod |= 0x08C0; //enabling ECD and SPD manually for now
+
+    vdp1_cmdt_t *cmdt_system_clip_coords;
+    cmdt_system_clip_coords = &cmdts[_SVIN_VDP1_ORDER_SYSTEM_CLIP_COORDS_INDEX];
+
+    cmdt_system_clip_coords->cmd_xc = _SVIN_SCREEN_WIDTH - 1;
+    cmdt_system_clip_coords->cmd_yc = _SVIN_SCREEN_HEIGHT - 1;
+
+    vdp1_sync_cmdt_list_put(_svin_cmdt_list, 0);
+    vdp1_sync();
+}
 
 int
 main(void)
@@ -93,19 +227,22 @@ main(void)
         //_video_fifo = malloc(2048*VIDEO_FIFO_SIZE); 
 
         vdp2_scrn_cell_format_t format;
+        memset(&format, 0x00, sizeof(format));
+        vdp2_scrn_normal_map_t normal_map;
+        memset(&normal_map, 0x00, sizeof(normal_map));
 
         format.scroll_screen = VDP2_SCRN_NBG0;
-        format.cc_count = VDP2_SCRN_CCC_PALETTE_16;
-        format.character_size = 1 * 1;
+        format.ccc = VDP2_SCRN_CCC_PALETTE_16;
+        format.char_size = VDP2_SCRN_CHAR_SIZE_1X1;
         format.pnd_size = 2;
-        format.auxiliary_mode = 0;
-        format.plane_size = 1 * 2;
-        format.cp_table = (uint32_t)VDP2_VRAM_TILES_START_0;
-        format.color_palette = (uint32_t)VDP2_CRAM_MODE_1_OFFSET(0, 0, 0);
-        format.map_bases.plane_a = (uint32_t)VDP2_VRAM_NAMES_START_0;
-        format.map_bases.plane_b = (uint32_t)VDP2_VRAM_NAMES_START_0;
-        format.map_bases.plane_c = (uint32_t)VDP2_VRAM_NAMES_START_0;
-        format.map_bases.plane_d = (uint32_t)VDP2_VRAM_NAMES_START_0;
+        format.aux_mode = 0;
+        format.cpd_base = (uint32_t)VDP2_VRAM_TILES_START_0;
+        format.palette_base = (uint32_t)VDP2_CRAM_MODE_1_OFFSET(0, 0, 0);
+        format.plane_size = VDP2_SCRN_PLANE_SIZE_2X1;
+        normal_map.plane_a = (uint32_t)VDP2_VRAM_NAMES_START_0;
+        normal_map.plane_b = (uint32_t)VDP2_VRAM_NAMES_START_0;
+        normal_map.plane_c = (uint32_t)VDP2_VRAM_NAMES_START_0;
+        normal_map.plane_d = (uint32_t)VDP2_VRAM_NAMES_START_0;
 
         vdp2_vram_cycp_t vram_cycp;
 
@@ -149,11 +286,11 @@ main(void)
 
         _copy_character_pattern_data(&format);
         _copy_color_palette(&format);
-        _copy_map(&format);
+        _copy_map(&format,&normal_map);
 
-        vdp2_scrn_cell_format_set(&format);
+        vdp2_scrn_cell_format_set(&format,&normal_map);
         vdp2_scrn_priority_set(VDP2_SCRN_NBG0, 2);
-        vdp2_scrn_display_set(VDP2_SCRN_NBG0, /* transparent = */ false);
+        vdp2_scrn_display_set(VDP2_SCRN_DISP_NBG0);
         vdp2_cram_mode_set(1);
 
         //vdp2_tvmd_display_res_set(VDP2_TVMD_INTERLACE_NONE, VDP2_TVMD_HORZ_NORMAL_B,
@@ -165,7 +302,7 @@ main(void)
 
         _svin_background_init();
         _update_vdp1_flag = 1;
-        _svin_background_set("LOGO.BG");
+        _svin_background_set_no_filelist("LOGO.BG");
         _svin_delay(1000);
         //while (1);
         
@@ -204,8 +341,8 @@ main(void)
 void
 user_init(void)
 {
-        vdp2_scrn_back_screen_color_set(VDP2_VRAM_ADDR(3, 0x01FFFE),
-            COLOR_RGB1555(1, 0, 0, 7));
+        vdp2_scrn_back_color_set(VDP2_VRAM_ADDR(3, 0x01FFFE),
+            RGB1555(1, 0, 0, 7));
 
 
         vdp_sync_vblank_in_set(_vblank_in_handler,NULL);
@@ -220,7 +357,7 @@ static void
 _copy_character_pattern_data(const vdp2_scrn_cell_format_t *format)
 {
         uint8_t *cpd;
-        cpd = (uint8_t *)format->cp_table;
+        cpd = (uint8_t *)format->cpd_base;
 
         /*memset(cpd + 0x00, 0x00, 0x20);
         memset(cpd + 0x20, 0x11, 0x20);*/
@@ -235,32 +372,32 @@ static void
 _copy_color_palette(const vdp2_scrn_cell_format_t *format)
 {
         uint16_t *color_palette;
-        color_palette = (uint16_t *)format->color_palette;
+        color_palette = (uint16_t *)format->palette_base;
 
 		for (int palette = 0;palette < 128; palette++)
 		{
 			for (int i=0;i<16;i++)
 			{
-				color_palette[palette*16+i] = COLOR_RGB_DATA | COLOR_RGB888_TO_RGB555(i*16,   palette*2,  0);
+				color_palette[palette*16+i] = (RGB888_RGB1555(1, i*16,   palette*2,  0).raw);
 			}
 		}
 }
 
 static void
-_copy_map(const vdp2_scrn_cell_format_t *format)
+_copy_map(const vdp2_scrn_cell_format_t *format,const vdp2_scrn_normal_map_t *normal_map)
 {
         uint32_t page_width;
-        page_width = VDP2_SCRN_CALCULATE_PAGE_WIDTH(format);
+        page_width = VDP2_SCRN_PAGE_WIDTH_CALCULATE(format);
         uint32_t page_height;
-        page_height = VDP2_SCRN_CALCULATE_PAGE_HEIGHT(format);
+        page_height = VDP2_SCRN_PAGE_HEIGHT_CALCULATE(format);
         uint32_t page_size;
-        page_size = VDP2_SCRN_CALCULATE_PAGE_SIZE(format);
+        page_size = VDP2_SCRN_PAGE_SIZE_CALCULATE(format);
 
         uint32_t *planes[4];
-        planes[0] = (uint32_t *)format->map_bases.plane_a;
-        planes[1] = (uint32_t *)format->map_bases.plane_b;
-        planes[2] = (uint32_t *)format->map_bases.plane_c;
-        planes[3] = (uint32_t *)format->map_bases.plane_d;
+        planes[0] = (uint32_t *)normal_map->plane_a;
+        planes[1] = (uint32_t *)normal_map->plane_b;
+        planes[2] = (uint32_t *)normal_map->plane_c;
+        planes[3] = (uint32_t *)normal_map->plane_d;
 
         uint32_t *a_pages[4];
         a_pages[0] = &planes[0][0];
@@ -279,8 +416,8 @@ _copy_map(const vdp2_scrn_cell_format_t *format)
                         page_idx = page_x + (page_width * page_y);
 
                         uint32_t pnd;
-                        pnd = VDP2_SCRN_PND_CONFIG_8(1, (uint32_t)format->cp_table,
-                            (uint32_t)(format->color_palette),
+                        pnd = VDP2_SCRN_PND_CONFIG_8(1, (uint32_t)format->cpd_base,
+                            (uint32_t)(format->palette_base),
 							0,page_y%2,0,0);
 
                         a_pages[0][page_idx] = pnd | 0x3000;// | num;
@@ -303,7 +440,7 @@ _prepare_video(void)
         initial_framebuffer_fill = 1;
         _last_vram_address = 0;
 
-        iso9660_filelist_root_read(&_filelist, -1);
+        cdfs_filelist_root_read(&_filelist);
         _video_file_fad = 0;
         for (unsigned int i = 0; i < _filelist.entries_count; i++)
         {
@@ -327,14 +464,14 @@ _prepare_video(void)
         int blocks_for_map = (_fifo_buffers_in_file+1) / 2048 + 1;
         _video_sectors_map = malloc(blocks_for_map * 2048);
         //reading whole
-        _svin_cd_block_sectors_read(_video_file_fad,_video_sectors_map, ISO9660_SECTOR_SIZE*blocks_for_map);
+        _svin_cd_block_sectors_read(_video_file_fad,_video_sectors_map, CDFS_SECTOR_SIZE*blocks_for_map);
 
         _last_used_fad = _video_file_fad + blocks_for_map;
 
         _last_used_offset = 511;
 
         //requesting entire video file
-        _svin_cd_block_sectors_read_request(_last_used_fad,_video_file_size/ISO9660_SECTOR_SIZE-blocks_for_map+1);
+        _svin_cd_block_multiple_sector_read_request(_last_used_fad,_video_file_size/CDFS_SECTOR_SIZE-blocks_for_map+1);
 
         _last_map_index = 1; //0 and 1 are used by sectors number. at first _play_video_frame this will be incremented to 2 
 }
