@@ -3,13 +3,26 @@
 #include <QFile>
 #include <QPainter>
 #include <QPicture>
+#include <QMessageBox>
+#include <QFileDialog>
+#include <QProcess>
+#include <QVector2D>
+
+#include "LzmaLib.h"
 
 //#define CANVAS_X 352
 //#define CANVAS_Y 200
-#define CANVAS_X 704
-#define CANVAS_Y 448
-
-QRgb me_canvas[CANVAS_X][CANVAS_Y];
+//#define CANVAS_X 704
+//#define CANVAS_Y 448
+//#define CANVAS_X 640
+//#define CANVAS_Y 272
+//#define CANVAS_X 320
+//#define CANVAS_Y 224
+//#define CANVAS_X 704
+//#define CANVAS_Y 152
+//#define FRAMES_MAX 6000
+//#define TILES_MAX 121000
+#define FPS 20
 
 typedef struct Keyframe {
     int index;
@@ -24,6 +37,12 @@ enum GTMCommand { // commandBits -> palette index (8 bits); V mirror (1 bit); H 
   ShortTileIdx = 1, // data -> tile index (16 bits)
   LongTileIdx = 2, // data -> tile index (32 bits)
   LoadPalette = 3, // data -> palette index (8 bits); palette format (8 bits) (00: RGBA32); RGBA bytes (32bits)
+  ShortBlendTileIdx = 4, // data -> tile index (16 bits), blending (16 bits)
+  LongBlendTileIdx = 5, // data -> tile index (32 bits), blending (16 bits)
+    ShortAddlBlendTileIdx = 6,
+    LongAddlBlendTileIdx = 7,
+    ShortAdditionalTileIdx = 9,
+    LongAdditionalTileIdx = 10,
   // new commands here
   FrameEnd = 28, // commandBits bit 0 -> keyframe end
   TileSet = 29, // data -> start tile (32 bits); end tile (32 bits); { indexes per tile (64 bytes) } * count; commandBits -> indexes count per palette
@@ -39,6 +58,8 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    ui->lineEdit->setText(QString("E:/Saturn/TileMotion/bro_small2.gtm"));
+    ui->lineEdit->setText(QString("E:/Saturn/TileMotion/TK_lo2_7_0.gtm"));
 }
 
 MainWindow::~MainWindow()
@@ -46,192 +67,23 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-int32_t _get_int_from_bytearray(QByteArray * b, int index)
+uint32_t _get_int_from_bytearray(QByteArray * b, int index)
 {
     uint8_t * p8 = (uint8_t *)b->data();
-    int32_t i = p8[index]+p8[index+1]*0x100+p8[index+2]*0x10000+p8[index+3]*0x1000000;
+    uint32_t i = p8[index]+p8[index+1]*0x100+p8[index+2]*0x10000+p8[index+3]*0x1000000;
     return i;
 }
 
-int16_t _get_short_from_bytearray(QByteArray * b, int index)
+uint16_t _get_short_from_bytearray(QByteArray * b, int index)
 {
     uint8_t * p8 = (uint8_t *)b->data();
     int16_t i = p8[index]+p8[index+1]*0x100;
     return i;
 }
 
-//binary format:
-// 1st few blocks are a metaheader: contains a number of blocks in file and a type of each one
-// types :
-// 0 - tiles data
-// 1 - commands data
-
-// every tile data include tiles that should be copied to VRAM as-is
-// VRAM address is not storied in file and should be incremented automatically and reset to zero after each chunk end command
-
-// command block includes a command bitstream, 4 byte each command
-// byte 0 is an opcode. valid opcodes:
-// 0x00, 0x40 , 0x80 , 0xC0 - WriteData, all 4 bytes are written onto current tile index position
-// 0x01 - SkipBlock, byte 1 is ignored, bytes 2..3 - number of tile positions to skip
-// 0x02 - End of frame, bytes 1..3 are ignored.
-// 0x03 - LoadPalette, bytes 1..2 are ignored, byte 3 - number of palette to load.
-//   Followed by 16 2-byte palette values
-// 0x04 - End of chunk, bytes 1..3 are ignored.
-//   Everything after this command and up to the end of 2048 bytes block is ignored.
-//   When processing this command, player should switch tile buffers (active and preloaded).
-
 void MainWindow::on_pushButton_clicked()
 {
-    Tile_Streams.clear();
-    Command_Streams.clear();
-    Command_Streams_Part1.clear();
-    Command_Streams_Part2.clear();
-    Blocks_Streams.clear();
-    Block_Type *b;
-
-    QFile out_file("V001.GTY");
-    out_file.open(QIODevice::WriteOnly|QIODevice::Truncate);
-
-    ProcessChunk("ba.tmv0",0);
-    ProcessChunk("ba.tmv1",1);
-    ProcessChunk("ba.tmv2",0);
-    ProcessChunk("ba.tmv3",1);
-    ProcessChunk("ba.tmv4",0);
-    ProcessChunk("ba.tmv5",1);
-    ProcessChunk("ba.tmv6",0);
-    ProcessChunk("ba.tmv7",1);
-    ProcessChunk("ba.tmv8",0);
-    ProcessChunk("ba.tmv9",1);
-    ProcessChunk("ba.tmv10",0);
-    ProcessChunk("ba.tmv11",1);
-    ProcessChunk("ba.tmv12",0);
-    ProcessChunk("ba.tmv13",1);
-    ProcessChunk("ba.tmv14",0);
-    ProcessChunk("ba.tmv15",1);
-
-    //generating blocks muxing info first
-    //first tiles go in unmuxed
-    for (int i =0; i<Tile_Streams[0].size()/2048; i++)
-    {
-        b = new Block_Type;
-        b->chunk = 0;
-        b->block = i;
-        b->type = 0; //tiles
-        Blocks_Streams.append(b[0]);
-    }
-    /*b = new Block_Type;
-    b->chunk = 0;
-    b->block = 0;
-    b->type = 2; //switch
-    Blocks_Streams.append(b[0]);*/
-    //now adding every block's commands along with current block's tiles
-    for (int chunk = 0; chunk < 15; chunk++)
-    {
-        //cmds part 1
-        for (int i =0; i<Command_Streams_Part1.at(chunk).size()/2048; i++)
-        {
-            b = new Block_Type;
-            b->chunk = chunk;
-            b->block = i;
-            b->type = 1+0x10*(chunk%2); //commands
-            Blocks_Streams.append(b[0]);
-        }
-        //interleave
-        int iCurrCommandsSize = Command_Streams_Part2.at(chunk).size()/2048;
-        int iCurrTilesSize = Tile_Streams.at(chunk+1).size()/2048;
-        int iTotal = iCurrCommandsSize * iCurrTilesSize;
-        for (int i=0;i<iTotal;i++)
-        {
-            if (i % iCurrCommandsSize == 0)
-            {
-                b = new Block_Type;
-                b->chunk = chunk+1;
-                b->block = i/iCurrCommandsSize;
-                b->type = 0+0x10*((chunk+1)%2); //tiles
-                Blocks_Streams.append(b[0]);
-            }
-            if (i % iCurrTilesSize == 0)
-            {
-                b = new Block_Type;
-                b->chunk = chunk;
-                b->block = i/iCurrTilesSize;
-                b->type = 1+0x10*(chunk%2); //commands
-                Blocks_Streams.append(b[0]);
-            }
-        }
-        /*b = new Block_Type;
-        b->chunk = 0;
-        b->block = 0;
-        b->type = 2; //switch
-        Blocks_Streams.append(b[0]);*/
-    }
-    //last chunk is only commands and no tiles
-    for (int i =0; i<Command_Streams.last().size()/2048; i++)
-    {
-        b = new Block_Type;
-        b->chunk = Command_Streams.size()-1;
-        b->block = i;
-        b->type = 1+0x10; //data
-        Blocks_Streams.append(b[0]);
-    }
-
-
-    //save chunk data into the file
-    uint8_t c;
-    c = Blocks_Streams.size()>>8;
-    out_file.write(QByteArray(1,c));
-    c = Blocks_Streams.size();
-    out_file.write(QByteArray(1,c));
-    int iWritten = 2;
-    for (int i=0;i<Blocks_Streams.size();i++)
-    {
-        c = Blocks_Streams.at(i).type;// | Blocks_Streams.at(i).chunk*0x10;
-        out_file.write(QByteArray(1,c));
-        iWritten++;
-    }
-    //round up
-    iWritten = iWritten % 2048;
-    if (iWritten > 0) iWritten = 2048 - iWritten;
-    out_file.write(QByteArray(iWritten,0));
-
-    //now save the content accordingly
-    //first tiles go in unmuxed
-    out_file.write(Tile_Streams[0]);
-    iWritten = Tile_Streams[0].size()/2048;
-    //now adding every block's commands along with current block's tiles
-    for (int chunk = 0; chunk < 15; chunk++)
-    {
-        //cmds part 1
-        out_file.write(Command_Streams_Part1.at(chunk));
-        //interleave
-        int iCurrCommandsSize = Command_Streams_Part2.at(chunk).size()/2048;
-        int iCurrTilesSize = Tile_Streams.at(chunk+1).size()/2048;
-        int iTotal = iCurrCommandsSize * iCurrTilesSize;
-        for (int i=0;i<iTotal;i++)
-        {
-            if (i % iCurrCommandsSize == 0)
-            {
-                out_file.write(Tile_Streams[chunk+1].mid((i/iCurrCommandsSize)*2048,2048));
-                iWritten++;
-            }
-            if (i % iCurrTilesSize == 0)
-            {
-                out_file.write(Command_Streams_Part2[chunk].mid((i/iCurrTilesSize)*2048,2048));
-                iWritten++;
-            }
-        }
-    }
-    //last chunk is only commands and no tiles
-    out_file.write(Command_Streams.last());
-    iWritten += Command_Streams.last().size()/2048;
-
-    out_file.close();
-}
-
-
-void MainWindow::ProcessChunk(QString filename, int framebuffer)
-{
-    QFile in_file(filename);
+    QFile in_file(ui->lineEdit->text());
     in_file.open(QIODevice::ReadOnly);
     QByteArray _gtm_header = in_file.read(40);
     int32_t _full_header_size = _get_int_from_bytearray(&_gtm_header,2*4);
@@ -253,65 +105,38 @@ void MainWindow::ProcessChunk(QString filename, int framebuffer)
         Keyframes_List.append(k);
     }
 
-    //read tiles list
-    QByteArray _dims_data = in_file.read(14);
-    QByteArray _tiles_cmd_data = in_file.read(10);
-    uint16_t Palette_Size = _get_short_from_bytearray(&_tiles_cmd_data,0);
-    Palette_Size = Palette_Size >> 6;
-    uint32_t TilesStart = _get_int_from_bytearray(&_tiles_cmd_data,2);
-    uint32_t TilesEnd = _get_int_from_bytearray(&_tiles_cmd_data,6);
-    QByteArray _tiles_data = in_file.read((TilesEnd-TilesStart+1)*64);
-    QList<QByteArray> Tiles;
-    for (int i=0;i<_tiles_data.size()/64;i++)
-    {
-        Tiles.append(_tiles_data.mid(i*64,64));
-    }
-
-    QByteArray *tiles_ba = new QByteArray();
-    Tile_Streams.append(tiles_ba[0]);
-    QByteArray *commands_ba = new QByteArray();
-    Command_Streams.append(commands_ba[0]);
-    QByteArray *commands_ba1 = new QByteArray();
-    Command_Streams_Part1.append(commands_ba1[0]);
-    QByteArray *commands_ba2 = new QByteArray();
-    Command_Streams_Part2.append(commands_ba2[0]);
-
     uint8_t c;
-    /*c = Tiles.size()>>8;
-    out_file.write(QByteArray(1,c));
-    c = Tiles.size();
-    out_file.write(QByteArray(1,c));
-    out_file.write(QByteArray(2046,0));*/
-    for (int i=0;i<Tiles.size();i++)
-    {
-        for (int j=0;j<32;j++)
-        {
-            c = Tiles.at(i)[j*2] << 4;
-            c |= Tiles.at(i)[j*2+1] & 0x0F;
-            //out_file.write(QByteArray(1,c));
-            Tile_Streams.last().append(c);
-        }
 
-    }
-    //round up
-    //int leftover = out_file.size()%2048;
-    //if (leftover != 0) leftover = 2048-leftover;
-    //out_file.write(QByteArray(leftover,'\0'));
-    while (Tile_Streams.last().size() % 2048 != 0) {
-        Tile_Streams.last().append('\0');
-    }
+    //tiles and palletes will be filled as commands go in
+    QVector<QByteArray> Tiles;
+    QVector<QByteArray> Palettes;
+    uint16_t Palette_Size = 16; //using 16-color palettes
 
-    QList<QByteArray> Palettes;
-    for (int i=0;i<128;i++)
-        Palettes.append(QByteArray());
+    //unpacking the stream
+    QByteArray _stream_data_packed = in_file.readAll();
+    size_t size_packed = _stream_data_packed.size();
 
-    //trying to render keyframe 0
-    //QByteArray _keyframe_data = in_file.read(Keyframes_List[0].compressed_size);
-    QByteArray _keyframe_data = in_file.readAll();
+    QFile out_file_u("tmp_packed.bin");
+    out_file_u.open(QIODevice::WriteOnly|QIODevice::Truncate);
+    out_file_u.write(_stream_data_packed);
+    out_file_u.close();
+
+    QProcess process;
+    QStringList proc_args;
+
+    proc_args.clear();
+    proc_args.append("e");
+    proc_args.append("-so");
+    proc_args.append("tmp_packed.bin");
+    if (QFile::exists("C:\\Program Files\\7-Zip\\7z.exe"))
+        process.setProgram("C:\\Program Files\\7-Zip\\7z");
+    process.setArguments(proc_args);
+    bool status = process.open();
+    process.waitForFinished();
+    QByteArray _stream_data = process.readAllStandardOutput();
 
     int iParseIndex = 0;
     uint16_t Command;
-
     uint8_t Command_Opcode;
     uint16_t Command_Param;
 
@@ -320,295 +145,1241 @@ void MainWindow::ProcessChunk(QString filename, int framebuffer)
     int iCurrentTileY=0;
     int iCurrentTile;
     int iCurrentPalette;
+    int iCurrentPaletteFormat;
     int iMirrorFlags;
     int index;
+    int iTilesStart;
+    int iTilesEnd;
     QColor color;
     QPainter pai;
     QPicture pic;
     QPicture pic2;
-    QImage img(CANVAS_X,CANVAS_Y,QImage::Format_ARGB32);
+    QMessageBox msgBox;
+    int iCanvasSizeX,iCanvasSizeY;
+    int iFramesCount;
+    int iTilesCount;
+    int iLastOpcode=0;
+    int iCurrentOpcodeBlock=-1;
+    int iCurrentOpcodeBlockCount=0;
+    int _size_x,_size_y;
 
-    for (int frame=0;frame<_frame_count;frame++)
-{
-        //while (/*(iParseIndex < _keyframe_data.size()) &&*/ (false == bFrameEnd))
-        while ((iParseIndex < _keyframe_data.size()) && (false == bFrameEnd))
+    //--------------- PASS 1 - searching for X and Y sizes and calculating number of frames and tiles
+    iCanvasSizeX = 0;
+    iCanvasSizeY = 0;
+    iFramesCount = 0;
+    while ((iParseIndex < _stream_data.size()))
     {
         //read next command
-        Command = _get_short_from_bytearray(&_keyframe_data,iParseIndex);
-        iParseIndex+=2;
+        Command = _get_short_from_bytearray(&_stream_data,iParseIndex);
         Command_Opcode = Command & 0x3F;
         Command_Param = Command >> 6;
+        iParseIndex+=2;
         switch (Command_Opcode)
         {
         case SkipBlock:
-            for (int i=0;i<=Command_Param;i++)
-            {
-                iCurrentTileX++;
-                if (iCurrentTileX >= CANVAS_X/8)
-                {
-                    iCurrentTileX = 0;
-                    iCurrentTileY++;
-                    if (iCurrentTileY >= CANVAS_Y/8)
-                        iCurrentTileY = 0;
-                }
-            }
-            //out_file.write(QByteArray(1,0x01));
-            //out_file.write(QByteArray(1,0x00));
-            //out_file.write(QByteArray(1,Command_Param>>8));
-            //out_file.write(QByteArray(1,Command_Param));
-            Command_Streams.last().append(1,0x01);
-            Command_Streams.last().append(1,0x00);
-            Command_Streams.last().append(1,Command_Param>>8);
-            Command_Streams.last().append(1,Command_Param);
             break;
         case ShortTileIdx:
-            iCurrentPalette = Command_Param>>2;
-            iMirrorFlags = Command_Param & 0x03;
-            iCurrentTile = _get_short_from_bytearray(&_keyframe_data,iParseIndex);
             iParseIndex+=2;
-            //draw the tile at X,Y
-            for (int x=0;x<8;x++)
-            {
-                for (int y=0;y<8;y++)
-                {
-                    switch(iMirrorFlags)
-                    {
-                    case 0:
-                        index = Tiles.at(iCurrentTile).at(x+y*8);
-                        break;
-                    case 1:
-                        index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                        break;
-                    case 2:
-                        index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                        break;
-                    case 3:
-                        index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                        break;
-                    }
-                    color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                    color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                    color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
-
-                    me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
-                }
-            }
-            switch (iMirrorFlags)
-            {
-            case 0:
-                //out_file.write(QByteArray(1,0x00));
-                Command_Streams.last().append(1,0x00);
-                break;
-            case 1:
-                //out_file.write(QByteArray(1,0x40));
-                Command_Streams.last().append(1,0x40);
-                break;
-            case 2:
-                //out_file.write(QByteArray(1,0x80));
-                Command_Streams.last().append(1,0x80);
-                break;
-            case 3:
-                //out_file.write(QByteArray(1,0xC0));
-                Command_Streams.last().append(1,0xC0);
-                break;
-            }
-
-            //c = iMirrorFlags<<6;
-            //out_file.write(QByteArray(1,c));
-
-            c = iCurrentPalette;
-            //out_file.write(QByteArray(1,c));
-            Command_Streams.last().append(1,c);
-            if (0==framebuffer)
-                c = (iCurrentTile+0x400)>>8;  //was 0x100 for lowres
-            else
-                c = (iCurrentTile+0x2400)>>8;  //was 0x100 for lowres
-            //out_file.write(QByteArray(1,c));
-            Command_Streams.last().append(1,c);
-            c = iCurrentTile;
-            //out_file.write(QByteArray(1,c));
-            Command_Streams.last().append(1,c);
-            //if (iCurrentTile!= 0)
-            //  c++;
-
-            //move to next X,Y
-            for (int i=0;i<=0;i++)
-            {
-                iCurrentTileX++;
-                if (iCurrentTileX >= CANVAS_X/8)
-                {
-                    iCurrentTileX = 0;
-                    iCurrentTileY++;
-                    if (iCurrentTileY >= CANVAS_Y/8)
-                        iCurrentTileY = 0;
-                }
-            }
+            break;
+        case ShortBlendTileIdx:
+            //dunno what to do with this, keep as normal tile for now
+            iParseIndex+=2;
+            iParseIndex+=2;
             break;
         case LongTileIdx:
-            iCurrentPalette = Command_Param>>2;
-            iMirrorFlags = Command_Param & 0x03;
-            iCurrentTile = _get_short_from_bytearray(&_keyframe_data,iParseIndex);
+            iParseIndex+=4;
+            break;
+        case LongBlendTileIdx:
+            iParseIndex+=4;
             iParseIndex+=2;
-            //draw the tile at X,Y
-            for (int x=0;x<8;x++)
-            {
-                for (int y=0;y<8;y++)
-                {
-                    switch(iMirrorFlags)
-                    {
-                    case 0:
-                        index = Tiles.at(iCurrentTile).at(x+y*8);
-                        break;
-                    case 1:
-                        index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                        break;
-                    case 2:
-                        index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                        break;
-                    case 3:
-                        index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                        break;
-                    }
-                    color.setRed(Palettes.at(iCurrentPalette).at(index*4));
-                    color.setGreen(Palettes.at(iCurrentPalette).at(index*4+1));
-                    color.setBlue(Palettes.at(iCurrentPalette).at(index*4+2));
-                    color.setAlpha(255);
-
-                    me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgba();
-                }
-            }
-            //move to next X,Y
-            for (int i=0;i<=0;i++)
-            {
-                iCurrentTileX++;
-                if (iCurrentTileX >= CANVAS_X/8)
-                {
-                    iCurrentTileX = 0;
-                    iCurrentTileY++;
-                    if (iCurrentTileY >= CANVAS_Y/8)
-                        iCurrentTileY = 0;
-                }
-            }
-            iCurrentTile = _get_short_from_bytearray(&_keyframe_data,iParseIndex);
-            iParseIndex+=2;
-            //draw the tile at X,Y
-            for (int x=0;x<8;x++)
-            {
-                for (int y=0;y<8;y++)
-                {
-                    switch(iMirrorFlags)
-                    {
-                    case 0:
-                        index = Tiles.at(iCurrentTile).at(x+y*8);
-                        break;
-                    case 1:
-                        index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                        break;
-                    case 2:
-                        index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                        break;
-                    case 3:
-                        index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                        break;
-                    }
-                    color.setRed(Palettes.at(iCurrentPalette).at(index*4));
-                    color.setGreen(Palettes.at(iCurrentPalette).at(index*4+1));
-                    color.setBlue(Palettes.at(iCurrentPalette).at(index*4+2));
-
-                    me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
-                }
-            }
-            //move to next X,Y
-            for (int i=0;i<=0;i++)
-            {
-                iCurrentTileX++;
-                if (iCurrentTileX >= CANVAS_X/8)
-                {
-                    iCurrentTileX = 0;
-                    iCurrentTileY++;
-                    if (iCurrentTileY >= CANVAS_Y/8)
-                        iCurrentTileY = 0;
-                }
-            }
+            break;
+        case ShortAddlBlendTileIdx:
+            iParseIndex+=6;
+            break;
+        case LongAddlBlendTileIdx:
+            iParseIndex+=8;
+            break;
+        case ShortAdditionalTileIdx:
+            iParseIndex+=5;
+            break;
+        case LongAdditionalTileIdx:
+            iParseIndex+=7;
             break;
         case LoadPalette:
-            iCurrentPalette = _get_short_from_bytearray(&_keyframe_data,iParseIndex);
-            iParseIndex+=2;
-            if (iCurrentPalette > 127)
-                iCurrentPalette = 127;
-            Palettes[iCurrentPalette].clear();
-            Palettes[iCurrentPalette].append(_keyframe_data.mid(iParseIndex,Palette_Size*4));
+            iParseIndex++;
+            iParseIndex++;
             iParseIndex+=(Palette_Size*4);
-            //making sure palette does not cross 2048 sector border
-            if (Command_Streams.last().size()%2048 > 2028)
-            {
-                while (Command_Streams.last().size()%2048 != 0)
-                {
-                    Command_Streams.last().append(4,0xFA);
-                }
-            }
-
-            //out_file.write(QByteArray(1,0x03));
-            Command_Streams.last().append(1,0x03);
-            //out_file.write(QByteArray(1,0x00));
-            Command_Streams.last().append(1,0x00);
-            //out_file.write(QByteArray(1,0x00));
-            Command_Streams.last().append(1,0x00);
-            //out_file.write(QByteArray(1,iCurrentPalette));
-            Command_Streams.last().append(1,iCurrentPalette);
-            for (int i=0;i<16;i++)
-            {
-                c = 0x80 | (((Palettes[iCurrentPalette][i*4+2]) >> 3) << 2)  | ((Palettes[iCurrentPalette][i*4+1] >> 3) >> 3);
-                //out_file.write(QByteArray(1,c));
-                Command_Streams.last().append(1,c);
-                c = (((Palettes[iCurrentPalette][i*4+1]) >> 3) << 5)  | ((Palettes[iCurrentPalette][i*4] >> 3));
-                //out_file.write(QByteArray(1,c));
-                Command_Streams.last().append(1,c);
-            }
-            /*out_file.write(Palettes[iCurrentPalette]);
-            if (iCurrentPalette == 127)
-            {
-                //round up
-                leftover = out_file.size()%2048;
-                if (leftover != 0) leftover = 2048-leftover;
-                out_file.write(QByteArray(leftover,'\0'));
-            }*/
             break;
         case FrameEnd:
-            bFrameEnd = true;
-            //out_file.write(QByteArray(1,0x02));
-            Command_Streams.last().append(1,0x02);
-            //out_file.write(QByteArray(1,0x00));
-            Command_Streams.last().append(1,0x00);
-            //out_file.write(QByteArray(1,0x00));
-            Command_Streams.last().append(1,0x00);
-            //out_file.write(QByteArray(1,0x00));
-            Command_Streams.last().append(1,0x00);
+            iFramesCount++;
             break;
         case TileSet:
-            //skip another tiles set for now
+            //loading some tiles!
+            iTilesStart=_get_int_from_bytearray(&_stream_data,iParseIndex);
+            iParseIndex+=4;
+            iTilesEnd=_get_int_from_bytearray(&_stream_data,iParseIndex);
+            iParseIndex+=4;
+            for (int i=iTilesStart;i<=iTilesEnd;i++)
+            {
+                iParseIndex+=64;
+                iTilesCount++;
+            }
             break;
         case SetDimensions:
-            //ignore for now
-            iParseIndex+=12;
+            // data -> width in tiles (16 bits); height in tiles (16 bits); frame length in nanoseconds (32 bits) (2^32-1: still frame); tile count (32 bits); commandBits -> none
+            //verify that hardcoded dimensions correspond to the one specified in file
+            iCanvasSizeX = 8*_get_short_from_bytearray(&_stream_data,iParseIndex);
+            iParseIndex+=2;
+            iCanvasSizeY = 8*_get_short_from_bytearray(&_stream_data,iParseIndex);
+            iParseIndex+=2;
+            iParseIndex+=8;
             break;
         case ExtendedCommand:
             //not supported?
+            qDebug("ExtendedCommand at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
             break;
         default:
             //not supported?
+            qDebug("Unknown opcode at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
             break;
         }
+        if (iFramesCount % 500 == 0) qDebug("PASS 1 : frame %d",iFramesCount);
     }
 
-    //draw image
+    //--------------- PASS 1 done
 
-    bFrameEnd = false;
+    qDebug("Canvas %d x %d, Frames  %d, Tiles %d",iCanvasSizeX, iCanvasSizeY, iFramesCount, iTilesCount);
 
-}
-    for (int x=0;x<CANVAS_X;x++)
+    QImage img(iCanvasSizeX,iCanvasSizeY,QImage::Format_ARGB32);
+    //QRgb me_canvas[iCanvasSizeX][iCanvasSizeY]
+    QVector<QVector<QRgb>> me_canvas;
+    me_canvas.resize(iCanvasSizeX);
+    for (int i=0;i<me_canvas.size();i++)
+        me_canvas[i].resize(iCanvasSizeY);
+    //uint8_t iTilesUsage[iFramesCount][iTilesCount];
+    QVector<QVector<uint8_t>> iTilesUsage;
+    iTilesUsage.resize(iFramesCount);
+    for (int i=0;i<iTilesUsage.size();i++)
     {
-        for (int y=0;y<CANVAS_Y;y++)
+        iTilesUsage[i].resize(iTilesCount);
+        iTilesUsage[i].fill(0,iTilesCount);
+    }
+    //int Stream_bytes[iFramesCount];
+    QVector<uint8_t> Stream_bytes;
+    Stream_bytes.resize(iFramesCount);
+    Tiles.resize(iTilesCount);
+
+    iLastOpcode=0;
+    iCurrentOpcodeBlock=-1;
+    iCurrentOpcodeBlockCount=0;
+    iParseIndex=0;
+
+    //clean huge usage array
+    /*for (int frame=0;frame<iFramesCount;frame++)
+        for (int tile=0;tile<TILES_MAX;tile++)
+            iTilesUsage[frame][tile]=0;*/
+
+    //--------------- PASS 2 - loading palettes and tiles, getting tiles usage
+
+    for (int frame=0;frame<iFramesCount;frame++)
+    {
+        Stream_bytes[frame]=0;
+        while ((iParseIndex < _stream_data.size()) && (false == bFrameEnd))
+        {
+            //read next command
+            Command = _get_short_from_bytearray(&_stream_data,iParseIndex);
+            Command_Opcode = Command & 0x3F;
+            Command_Param = Command >> 6;
+            if ((Command_Opcode != iLastOpcode) && (Command_Opcode == LoadPalette))
+            {
+                iCurrentOpcodeBlock = LoadPalette;
+                iCurrentOpcodeBlockCount=0;
+                qDebug("LoadPalette block started at index 0x%x", iParseIndex);
+            }
+            if ((Command_Opcode != LoadPalette) && (iCurrentOpcodeBlock == LoadPalette))
+            {
+                iCurrentOpcodeBlock = -1;
+                qDebug("LoadPalette block ended at index 0x%x, number of entries = %i", iParseIndex, iCurrentOpcodeBlockCount);
+            }
+            iCurrentOpcodeBlockCount++;
+            iParseIndex+=2;
+            Stream_bytes[frame]+=2;
+            switch (Command_Opcode)
+            {
+            case SkipBlock:
+                for (int i=0;i<=Command_Param;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                //out_file.write(QByteArray(1,0x01));
+                //out_file.write(QByteArray(1,0x00));
+                //out_file.write(QByteArray(1,Command_Param>>8));
+                //out_file.write(QByteArray(1,Command_Param));
+                break;
+            case ShortTileIdx:
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                if (iCurrentTile < 0)
+                    qDebug("Negative tile at index 0x%x, number of entries = %i", iParseIndex, iCurrentOpcodeBlockCount);
+                iTilesUsage[frame][iCurrentTile] = 1;
+                iParseIndex+=2;
+                Stream_bytes[frame]+=2;
+                //draw the tile at X,Y
+                /*for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    //out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    //out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    //out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    //out_file.write(QByteArray(1,0xC0));
+                    break;
+                }*/
+
+                c = iCurrentPalette;
+                //out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                //out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                //out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case ShortBlendTileIdx:
+                qDebug("ShortBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                //dunno what to do with this, keep as normal tile for now
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                Stream_bytes[frame]+=2;
+                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                Stream_bytes[frame]+=2;
+                iTilesUsage[frame][iCurrentTile] = 1;
+                //draw the tile at X,Y
+                /*for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    //out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    //out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    //out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    //out_file.write(QByteArray(1,0xC0));
+                    break;
+                }*/
+
+                c = iCurrentPalette;
+                //out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                //out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                //out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case LongTileIdx:
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_int_from_bytearray(&_stream_data,iParseIndex);
+                iTilesUsage[frame][iCurrentTile] = 1;
+                iParseIndex+=4;
+                Stream_bytes[frame]+=4;
+                //draw the tile at X,Y
+                /*for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    //out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    //out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    //out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    //out_file.write(QByteArray(1,0xC0));
+                    break;
+                }*/
+
+                c = iCurrentPalette;
+                //out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                //out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                //out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case LongBlendTileIdx:
+                qDebug("LongBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                //dunno what to do with this, keep as normal tile for now
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_int_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=4;
+                Stream_bytes[frame]+=4;
+                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                Stream_bytes[frame]+=2;
+                iTilesUsage[frame][iCurrentTile] = 1;
+                //draw the tile at X,Y
+                /*for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    //out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    //out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    //out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    //out_file.write(QByteArray(1,0xC0));
+                    break;
+                }*/
+
+                c = iCurrentPalette;
+                //out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                //out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                //out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case ShortAddlBlendTileIdx:
+                qDebug("ShortAddlBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=6;
+                Stream_bytes[frame]+=6;
+                break;
+            case LongAddlBlendTileIdx:
+                qDebug("LongAddlBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=8;
+                Stream_bytes[frame]+=8;
+                break;
+            case ShortAdditionalTileIdx:
+                qDebug("ShortAdditionalTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=5;
+                Stream_bytes[frame]+=5;
+                break;
+            case LongAdditionalTileIdx:
+                qDebug("LongAdditionalTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=7;
+                Stream_bytes[frame]+=7;
+                break;
+            case LoadPalette:
+                //iCurrentPalette = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iCurrentPalette = _stream_data[iParseIndex];
+                iParseIndex++;
+                Stream_bytes[frame]++;
+                iCurrentPaletteFormat = _stream_data[iParseIndex];
+                iParseIndex++;
+                Stream_bytes[frame]++;
+                if (iCurrentPalette > 127)
+                {
+                    qDebug("Wrong palette number at index 0x%x : %d", iParseIndex, iCurrentPalette);
+                    iCurrentPalette = 127;
+                }
+                if (iCurrentPaletteFormat != 0)
+                {
+                    qDebug("Wrong palette format at index 0x%x : %d", iParseIndex, iCurrentPaletteFormat);
+                }
+                while (Palettes.size() <= iCurrentPalette)
+                    Palettes.append(QByteArray());
+                Palettes[iCurrentPalette].clear();
+                Palettes[iCurrentPalette].append(_stream_data.mid(iParseIndex,Palette_Size*4));
+                iParseIndex+=(Palette_Size*4);
+                Stream_bytes[frame]+=(Palette_Size*4);
+                //out_file.write(QByteArray(1,0x03));
+                //out_file.write(QByteArray(1,0x00));
+                //out_file.write(QByteArray(1,0x00));
+                //out_file.write(QByteArray(1,iCurrentPalette));
+                for (int i=0;i<16;i++)
+                {
+                    c = 0x00 | (((Palettes[iCurrentPalette][i*4+2]) >> 3) << 2)  | ((Palettes[iCurrentPalette][i*4+1] >> 3) >> 3);
+                    //out_file.write(QByteArray(1,c));
+                    c = (((Palettes[iCurrentPalette][i*4+1]) >> 3) << 5)  | ((Palettes[iCurrentPalette][i*4] >> 3));
+                    //out_file.write(QByteArray(1,c));
+                }
+                break;
+            case FrameEnd:
+                bFrameEnd = true;
+                //out_file.write(QByteArray(1,0x02));
+                //out_file.write(QByteArray(1,0x00));
+                //out_file.write(QByteArray(1,0x00));
+                //out_file.write(QByteArray(1,0x00));
+                break;
+            case TileSet:
+                //loading some tiles!
+                iTilesStart=_get_int_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=4;
+                Stream_bytes[frame]+=4;
+                iTilesEnd=_get_int_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=4;
+                Stream_bytes[frame]+=4;
+                qDebug("TileSet block, setting tiles from %i to %i", iTilesStart, iTilesEnd);
+                for (int i=iTilesStart;i<=iTilesEnd;i++)
+                {
+                    while (Tiles.size() <= i)
+                    {
+                        Tiles.append(QByteArray(64,0));
+                    }
+                    Tiles[i].clear();
+                    for (int i=0;i<32;i++)
+                        Tiles[i].append( (_stream_data[iParseIndex+i*2]<<4) | (_stream_data[iParseIndex+i*2+1]) );
+                    //Tiles[i].append(_stream_data.mid(iParseIndex,64));
+                    iParseIndex+=64;
+                    //Stream_bytes[frame]+=64; //tiles are not counted in stream
+                }
+                break;
+            case SetDimensions:
+                // data -> width in tiles (16 bits); height in tiles (16 bits); frame length in nanoseconds (32 bits) (2^32-1: still frame); tile count (32 bits); commandBits -> none
+                //verify that hardcoded dimensions correspond to the one specified in file
+                _size_x = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                Stream_bytes[frame]+=2;
+                if ((iCanvasSizeX/8) != _size_x)
+                {
+                    qDebug("Wrong X size at index 0x%x: specified %d, detected %d", iParseIndex, _size_x, iCanvasSizeX/8);
+                    return;
+                }
+                _size_y = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                Stream_bytes[frame]+=2;
+                if ((iCanvasSizeY/8) != _size_y)
+                {
+                    qDebug("Wrong Y size at index 0x%x: specified %d, detected %d", iParseIndex, _size_y, iCanvasSizeY/8);
+                    return;
+                }
+                iParseIndex+=8;
+                Stream_bytes[frame]+=8;
+                break;
+            case ExtendedCommand:
+                //not supported?
+                qDebug("ExtendedCommand at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
+                break;
+            default:
+                //not supported?
+                qDebug("Unknown opcode at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
+                break;
+            }
+            iLastOpcode = Command_Opcode;
+        }
+
+        //go to next frame
+        bFrameEnd = false;
+        if (frame % 500 == 0) qDebug("PASS 2 : frame %d",frame);
+    }
+
+    qDebug("Tiles loading done");
+
+    //--------------- PASS 2 done
+
+    //optimizing usage by removing blinking on/off tiles
+#define GLUE_SIZE 25
+    for (int tile=0;tile<iTilesCount;tile++)
+    {
+        for (int frame=0;frame<iFramesCount-GLUE_SIZE-1;frame++)
+        {
+            if ( (iTilesUsage[frame][tile]==1) && (iTilesUsage[frame+1][tile]==0)  )
+            {
+                for (int i=2; i< (GLUE_SIZE+2);i++)
+                {
+                    if (iTilesUsage[frame+i][tile]==1)
+                         iTilesUsage[frame+1][tile]=1;
+                }
+            }
+        }
+        if (tile % 50000 == 0) qDebug("GLUEING : tile %d",tile);
+    }
+    qDebug("Glueing done");
+
+
+    //--------------- PASS 3 - saving data
+
+    QFile out_file("output.gts");
+    out_file.open(QIODevice::WriteOnly|QIODevice::Truncate);
+    //saving header
+    out_file.write(QByteArray(1,iCanvasSizeX>>24));
+    out_file.write(QByteArray(1,iCanvasSizeX>>16));
+    out_file.write(QByteArray(1,iCanvasSizeX>>8));
+    out_file.write(QByteArray(1,iCanvasSizeX>>0));
+    out_file.write(QByteArray(1,iCanvasSizeY>>24));
+    out_file.write(QByteArray(1,iCanvasSizeY>>16));
+    out_file.write(QByteArray(1,iCanvasSizeY>>8));
+    out_file.write(QByteArray(1,iCanvasSizeY>>0));
+    out_file.write(QByteArray(1,iFramesCount>>24));
+    out_file.write(QByteArray(1,iFramesCount>>16));
+    out_file.write(QByteArray(1,iFramesCount>>8));
+    out_file.write(QByteArray(1,iFramesCount>>0));
+    while(out_file.size() < 2048)
+        out_file.write(QByteArray(1,0));
+
+    //saving chunks
+    QByteArray chunk_header_tiles;
+    QByteArray chunk_data_tiles;
+    QByteArray chunk_header_commands;
+    QByteArray chunk_data_commands;
+    QByteArray chunk_header_palettes;
+    QByteArray chunk_data_palettes;
+    //VRAM is 512 kB, tilemap is 64*128*4 = 32 kB, remaining 480k = 15360 tiles
+    QVector<int> TilesVRAMUsage;
+    TilesVRAMUsage.fill(0,15360);
+    QByteArray header_magic_tiles;
+    QByteArray header_magic_palettes;
+    QByteArray header_magic_commands;
+    header_magic_tiles.append(QByteArray(1,0xDE));
+    header_magic_tiles.append(QByteArray(1,0xAF));
+    header_magic_tiles.append(QByteArray(1,0xFA));
+    header_magic_tiles.append(QByteArray(1,0xCE));
+    header_magic_palettes.append(QByteArray(1,0xBE));
+    header_magic_palettes.append(QByteArray(1,0xEF));
+    header_magic_palettes.append(QByteArray(1,0xDE));
+    header_magic_palettes.append(QByteArray(1,0xAD));
+    header_magic_commands.append(QByteArray(1,0xCA));
+    header_magic_commands.append(QByteArray(1,0xCA));
+    header_magic_commands.append(QByteArray(1,0xDE));
+    header_magic_commands.append(QByteArray(1,0xFE));
+
+    //tiles format : 128 bytes header (4 magic, 120 data, 2 dummy), 2048-128 = 60*32 bytes data
+    //palettes format : 4 bytes header (4 magic), 2048-4 compressed data
+    //commands format : 4 bytes header (4 magic), 2048-4 command data
+
+    iLastOpcode=0;
+    iCurrentOpcodeBlock=-1;
+    iCurrentOpcodeBlockCount=0;
+    iParseIndex=0;
+
+    for (int frame=0;frame<iFramesCount;frame++)
+    {
+        //dropping tiles that are not used anymore
+        if (frame > 0)
+        {
+            for (int tile=0;tile<iTilesCount;tile++)
+            {
+                if ( (iTilesUsage[frame][tile]==0) && (iTilesUsage[frame-1][tile]==1) )
+                    TilesVRAMUsage[TilesVRAMUsage.indexOf(tile)] = 0;
+            }
+        }
+        chunk_header_tiles.append(header_magic_tiles);
+        if (frame == 0)
+        {
+            //first frame
+            for (int tile=0;tile<iTilesCount;tile++)
+            {
+                if (iTilesUsage[frame][tile]==1)
+                {
+                    int location = TilesVRAMUsage.indexOf(0);
+                    TilesVRAMUsage[location] = tile;
+                    chunk_header_tiles.append(QByteArray(1,tile>>8));
+                    chunk_header_tiles.append(QByteArray(1,tile));
+                    chunk_data_tiles.append(Tiles[tile]);
+                    if (chunk_data_tiles.size() >= 2048-128)
+                    {
+                        //enough datafor a sector, copying to sector
+                        chunk_header_tiles.append(QByteArray(128-chunk_header_tiles.size(),0));
+                        //chunk_data.append(QByteArray(2048-128-chunk_data.size(),0));
+                        assert(chunk_header_tiles.size()+chunk_data_tiles.size() == 2048);
+                        out_file.write(chunk_header_tiles);
+                        out_file.write(chunk_data_tiles);
+                        chunk_header_tiles.clear();
+                        chunk_data_tiles.clear();
+                    }
+                }
+            }
+        }
+        else
+        {
+            //non-first frame
+            for (int tile=0;tile<iTilesCount;tile++)
+            {
+                if ( (iTilesUsage[frame][tile]==1) && (iTilesUsage[frame-1][tile]==0) )
+                {
+                    int location = TilesVRAMUsage.indexOf(0);
+                    TilesVRAMUsage[location] = tile;
+                    chunk_header_tiles.append(QByteArray(1,0));
+                    chunk_header_tiles.append(QByteArray(1,1));//1 = tile data
+                    chunk_header_tiles.append(QByteArray(1,tile>>8));
+                    chunk_header_tiles.append(QByteArray(1,tile));
+                    chunk_data_tiles.append(Tiles[tile]);
+                    if (chunk_data_tiles.size() >= 2048-128)
+                    {
+                        //enough datafor a sector, copying to sector
+                        chunk_header_tiles.append(QByteArray(128-chunk_header_tiles.size(),0));
+                        //chunk_data.append(QByteArray(2048-128-chunk_data.size(),0));
+                        assert(chunk_header_tiles.size()+chunk_data_tiles.size() == 2048);
+                        out_file.write(chunk_header_tiles);
+                        out_file.write(chunk_data_tiles);
+                        chunk_header_tiles.clear();
+                        chunk_data_tiles.clear();
+                    }
+                }
+            }
+        }
+        //finalizing tile data sector
+        if (chunk_header_tiles.size())
+        {
+            chunk_header_tiles.append(QByteArray(128-chunk_header_tiles.size(),0));
+            chunk_data_tiles.append(QByteArray(2048-128-chunk_data_tiles.size(),0));
+            out_file.write(chunk_header_tiles);
+            out_file.write(chunk_data_tiles);
+            chunk_header_tiles.clear();
+            chunk_data_tiles.clear();
+        }
+
+        chunk_header_commands.clear();
+        chunk_data_commands.clear();
+
+        chunk_header_commands.append(header_magic_commands);
+
+        //now saving the stream data for the frame, it's either tiles or palettes
+        while ((iParseIndex < _stream_data.size()) && (false == bFrameEnd))
+        {
+            //read next command
+            Command = _get_short_from_bytearray(&_stream_data,iParseIndex);
+            Command_Opcode = Command & 0x3F;
+            Command_Param = Command >> 6;
+            if ((Command_Opcode != iLastOpcode) && (Command_Opcode == LoadPalette))
+            {
+                iCurrentOpcodeBlock = LoadPalette;
+                iCurrentOpcodeBlockCount=0;
+                //qDebug("LoadPalette block started at index 0x%x", iParseIndex);
+            }
+            if ((Command_Opcode != LoadPalette) && (iCurrentOpcodeBlock == LoadPalette))
+            {
+                iCurrentOpcodeBlock = -1;
+                //qDebug("LoadPalette block ended at index 0x%x, number of entries = %i", iParseIndex, iCurrentOpcodeBlockCount);
+            }
+            iCurrentOpcodeBlockCount++;
+            iParseIndex+=2;
+            switch (Command_Opcode)
+            {
+            case SkipBlock:
+                for (int i=0;i<=Command_Param;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                out_file.write(QByteArray(1,0x01));
+                out_file.write(QByteArray(1,0x00));
+                out_file.write(QByteArray(1,Command_Param>>8));
+                out_file.write(QByteArray(1,Command_Param));
+                break;
+            case ShortTileIdx:
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                if (iCurrentTile < 0)
+                    qDebug("Negative tile at index 0x%x, number of entries = %i", iParseIndex, iCurrentOpcodeBlockCount);
+                iTilesUsage[frame][iCurrentTile] = 1;
+                iParseIndex+=2;
+                //draw the tile at X,Y
+                for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    out_file.write(QByteArray(1,0xC0));
+                    break;
+                }
+
+                //c = iMirrorFlags<<6;
+                //out_file.write(QByteArray(1,c));
+                c = iCurrentPalette;
+                out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case ShortBlendTileIdx:
+                qDebug("ShortBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                //dunno what to do with this, keep as normal tile for now
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                iTilesUsage[frame][iCurrentTile] = 1;
+                //draw the tile at X,Y
+                for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    out_file.write(QByteArray(1,0xC0));
+                    break;
+                }
+
+                c = iCurrentPalette;
+                out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case LongTileIdx:
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_int_from_bytearray(&_stream_data,iParseIndex);
+                iTilesUsage[frame][iCurrentTile] = 1;
+                iParseIndex+=4;
+                //draw the tile at X,Y
+                for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    out_file.write(QByteArray(1,0xC0));
+                    break;
+                }
+
+                c = iCurrentPalette;
+                out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case LongBlendTileIdx:
+                qDebug("LongBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                //dunno what to do with this, keep as normal tile for now
+                iCurrentPalette = Command_Param>>2;
+                iMirrorFlags = Command_Param & 0x03;
+                iCurrentTile = _get_int_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=4;
+                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=2;
+                iTilesUsage[frame][iCurrentTile] = 1;
+                //draw the tile at X,Y
+                for (int x=0;x<8;x++)
+                {
+                    for (int y=0;y<8;y++)
+                    {
+                        switch(iMirrorFlags)
+                        {
+                        case 0:
+                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            break;
+                        case 1:
+                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            break;
+                        case 2:
+                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            break;
+                        case 3:
+                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            break;
+                        }
+                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
+                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
+                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+
+                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
+                    }
+                }
+                switch (iMirrorFlags)
+                {
+                case 0:
+                    out_file.write(QByteArray(1,0x00));
+                    break;
+                case 1:
+                    out_file.write(QByteArray(1,0x40));
+                    break;
+                case 2:
+                    out_file.write(QByteArray(1,0x80));
+                    break;
+                case 3:
+                    out_file.write(QByteArray(1,0xC0));
+                    break;
+                }
+
+                c = iCurrentPalette;
+                out_file.write(QByteArray(1,c));
+                c = (iCurrentTile+0x100)>>8;
+                out_file.write(QByteArray(1,c));
+                c = iCurrentTile;
+                out_file.write(QByteArray(1,c));
+                if (iCurrentTile!= 0)
+                    c++;
+                //move to next X,Y
+                for (int i=0;i<=0;i++)
+                {
+                    iCurrentTileX++;
+                    if (iCurrentTileX >= iCanvasSizeX/8)
+                    {
+                        iCurrentTileX = 0;
+                        iCurrentTileY++;
+                        if (iCurrentTileY >= iCanvasSizeY/8)
+                            iCurrentTileY = 0;
+                    }
+                }
+                break;
+            case ShortAddlBlendTileIdx:
+                qDebug("ShortAddlBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=6;
+                break;
+            case LongAddlBlendTileIdx:
+                qDebug("LongAddlBlendTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=8;
+                break;
+            case ShortAdditionalTileIdx:
+                qDebug("ShortAdditionalTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=5;
+                break;
+            case LongAdditionalTileIdx:
+                qDebug("LongAdditionalTileIdx at index 0x%x is unsupported", iParseIndex);
+                iParseIndex+=7;
+                break;
+            case LoadPalette:
+                //iCurrentPalette = _get_short_from_bytearray(&_stream_data,iParseIndex);
+                iCurrentPalette = _stream_data[iParseIndex];
+                iParseIndex++;
+                iCurrentPaletteFormat = _stream_data[iParseIndex];
+                iParseIndex++;
+                if (iCurrentPalette > 127)
+                {
+                    qDebug("Wrong palette number at index 0x%x : %d", iParseIndex, iCurrentPalette);
+                    iCurrentPalette = 127;
+                }
+                if (iCurrentPaletteFormat != 0)
+                {
+                    qDebug("Wrong palette format at index 0x%x : %d", iParseIndex, iCurrentPaletteFormat);
+                }
+                while (Palettes.size() <= iCurrentPalette)
+                    Palettes.append(QByteArray());
+                Palettes[iCurrentPalette].clear();
+                Palettes[iCurrentPalette].append(_stream_data.mid(iParseIndex,Palette_Size*4));
+                iParseIndex+=(Palette_Size*4);
+                out_file.write(QByteArray(1,0x03));
+                out_file.write(QByteArray(1,0x00));
+                out_file.write(QByteArray(1,0x00));
+                out_file.write(QByteArray(1,iCurrentPalette));
+                for (int i=0;i<16;i++)
+                {
+                    c = 0x00 | (((Palettes[iCurrentPalette][i*4+2]) >> 3) << 2)  | ((Palettes[iCurrentPalette][i*4+1] >> 3) >> 3);
+                    out_file.write(QByteArray(1,c));
+                    c = (((Palettes[iCurrentPalette][i*4+1]) >> 3) << 5)  | ((Palettes[iCurrentPalette][i*4] >> 3));
+                    out_file.write(QByteArray(1,c));
+                }
+                break;
+            case FrameEnd:
+                bFrameEnd = true;
+                out_file.write(QByteArray(1,0x02));
+                out_file.write(QByteArray(1,0x00));
+                out_file.write(QByteArray(1,0x00));
+                out_file.write(QByteArray(1,0x00));
+                break;
+            case TileSet:
+                //loading some tiles!
+                iTilesStart=_get_int_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=4;
+                iTilesEnd=_get_int_from_bytearray(&_stream_data,iParseIndex);
+                iParseIndex+=4;
+                for (int i=iTilesStart;i<=iTilesEnd;i++)
+                    iParseIndex+=64;
+                break;
+            case SetDimensions:
+                // data -> width in tiles (16 bits); height in tiles (16 bits); frame length in nanoseconds (32 bits) (2^32-1: still frame); tile count (32 bits); commandBits -> none
+                iParseIndex+=12;
+                break;
+            case ExtendedCommand:
+                //not supported?
+                qDebug("ExtendedCommand at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
+                break;
+            default:
+                //not supported?
+                qDebug("Unknown opcode at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
+                break;
+            }
+            iLastOpcode = Command_Opcode;
+        }
+
+        //go to next frame
+        bFrameEnd = false;
+    }
+
+    out_file.close();
+
+    //--------------- PASS 3 done
+
+    //dumping tiles usage report
+    QFile out_file_t("tiles_usage.txt");
+    out_file_t.open(QIODevice::WriteOnly|QIODevice::Truncate);
+    int Loads[iFramesCount];
+    int Loads_per_sec[iFramesCount];
+    for (int frame=0;frame<(iFramesCount-1);frame++)
+    {
+        //calculating tile count in-frame
+        int Usage = 0;
+        for (int tile=0;tile<iTilesCount;tile++)
+            if (1==iTilesUsage[frame][tile])
+                Usage++;
+        if (Usage > 7900)
+        {
+            out_file_t.write(QString("Tiles count overflow at frame %1, count %2\r\n").arg(frame).arg(Usage).toLatin1());
+        }
+        //calculating tiles to load for this frame
+        Loads[frame] = 0;
+        if (0==frame)
+                Loads[frame] = Usage;
+        else
+        {
+            for (int tile=0;tile<iTilesCount;tile++)
+                if ( (1==iTilesUsage[frame][tile]) && (0==iTilesUsage[frame-1][tile]))
+                    Loads[frame]++;
+        }
+        //calculating load amount per last second
+        if (frame<(FPS-1))
+        {
+            Loads_per_sec[frame]=0;
+        }
+        else
+        {
+            Loads_per_sec[frame]=0;
+            for (int i=0;i<FPS;i++)
+            {
+                Loads_per_sec[frame]+=Loads[frame-i]*32;
+                Loads_per_sec[frame]+=Stream_bytes[frame-i];
+            }
+            if (Loads_per_sec[frame] > 250000)
+            {
+                out_file_t.write(QString("Tiles load amount overflow at frame %1, amount %2\r\n").arg(frame).arg(Loads_per_sec[frame]).toLatin1());
+            }
+        }
+        //calculating tiles to drop for this frame
+        int Drop = 0;
+        for (int tile=0;tile<iTilesCount;tile++)
+            if ( (1==iTilesUsage[frame][tile]) && (0==iTilesUsage[frame+1][tile]))
+                Drop++;
+
+        out_file_t.write(QString("Frame %1 : tiles %2 load %3 drop %4, stream %5 load per second %6 bytes\r\n").arg(frame).arg(Usage).arg(Loads[frame]).arg(Drop).arg(Stream_bytes[frame]).arg(Loads_per_sec[frame]).toLatin1());
+    }
+    out_file_t.close();
+
+    for (int x=0;x<iCanvasSizeX;x++)
+    {
+        for (int y=0;y<iCanvasSizeY;y++)
         {
             img.setPixel(x,y,me_canvas[x][y]);
         }
@@ -616,35 +1387,17 @@ void MainWindow::ProcessChunk(QString filename, int framebuffer)
 
     ui->label->setPixmap(QPixmap::fromImage(img));
 
-    //put "end of chunk" command at the end of this chunk
-    Command_Streams.last().append(1,0x04);
-    Command_Streams.last().append(1,0x00);
-    Command_Streams.last().append(1,0x00);
-    Command_Streams.last().append(1,0x00);
-
-    //round up
-    while (Command_Streams.last().size() % 2048 != 0) {
-        Command_Streams.last().append(1,0xFA);
-    }
-
-    //divide into parts
-    if (Command_Streams.last().size()/2048 < 20)
-    {
-        //too small, not muxing at all
-        Command_Streams_Part1.last().clear();
-        Command_Streams_Part2.last().clear();
-        Command_Streams_Part1.last().append(Command_Streams.last());
-    }
-    else
-    {
-        //dividing into 2 parts for commands prebuffering first should not be muxed
-        Command_Streams_Part1.last().clear();
-        Command_Streams_Part2.last().clear();
-        Command_Streams_Part1.last().append(Command_Streams.last().left(2048*20));
-        Command_Streams_Part2.last().append(Command_Streams.last().mid(2048*20));
-    }
-
     in_file.close();
-    //  out_file.close();
 
+    qDebug("Processing complete");
 }
+
+
+void MainWindow::on_pushButton_2_clicked()
+{
+    QString fileName = QFileDialog::getOpenFileName(this,
+        tr("Open Video"), "", tr("Tilemotion Files (*.gtm)"));
+    if (fileName.size())
+        ui->lineEdit->setText(fileName);
+}
+

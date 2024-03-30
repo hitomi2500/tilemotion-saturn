@@ -7,12 +7,6 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
-struct Block_Type{
-    int chunk;
-    int block;
-    int type;
-} ;
-
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -20,18 +14,14 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-    void ProcessChunk(QString filename, int framebuffer);
 
 private slots:
     void on_pushButton_clicked();
 
+    void on_pushButton_2_clicked();
+
 private:
     Ui::MainWindow *ui;
-    QList<QByteArray> Tile_Streams;
-    QList<QByteArray> Command_Streams;
-    QList<QByteArray> Command_Streams_Part1;
-    QList<QByteArray> Command_Streams_Part2;
-    QList<Block_Type> Blocks_Streams;
 };
 
 #endif // MAINWINDOW_H

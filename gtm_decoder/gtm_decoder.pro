@@ -9,11 +9,21 @@ CONFIG += c++11
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    Alloc.c \
+    LzmaDec.c \
+    LzmaLib.c \
     gtm.cpp \
     main.cpp \
     mainwindow.cpp
 
 HEADERS += \
+    7zTypes.h \
+    7zWindows.h \
+    Alloc.h \
+    Compiler.h \
+    LzmaDec.h \
+    LzmaLib.h \
+    Precomp.h \
     mainwindow.h
 
 FORMS += \
