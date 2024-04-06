@@ -58,8 +58,10 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
-    ui->lineEdit->setText(QString("E:/Saturn/TileMotion/bro_small2.gtm"));
-    ui->lineEdit->setText(QString("E:/Saturn/TileMotion/TK_lo2_7_0.gtm"));
+    //ui->lineEdit->setText(QString("E:/Saturn/TileMotion/bro_small2.gtm"));
+    ui->lineEdit->setText(QString("E:/Saturn/TileMotion/yui2.gtm"));
+    //ui->lineEdit->setText(QString("E:/Saturn/TileMotion/yanzi.gtm"));
+    //ui->lineEdit->setText(QString("E:/Saturn/TileMotion/TK_lo2_7_0.gtm"));
 }
 
 MainWindow::~MainWindow()
@@ -109,7 +111,8 @@ void MainWindow::on_pushButton_clicked()
 
     //tiles and palletes will be filled as commands go in
     QVector<QByteArray> Tiles;
-    QVector<QByteArray> Palettes;
+    QVector<QByteArray> CurrentPalettes;
+    CurrentPalettes.resize(128);
     uint16_t Palette_Size = 16; //using 16-color palettes
 
     //unpacking the stream
@@ -147,7 +150,7 @@ void MainWindow::on_pushButton_clicked()
     int iCurrentPalette;
     int iCurrentPaletteFormat;
     int iMirrorFlags;
-    int index;
+    uint8_t uindex8;
     int iTilesStart;
     int iTilesEnd;
     QColor color;
@@ -211,6 +214,7 @@ void MainWindow::on_pushButton_clicked()
             iParseIndex+=(Palette_Size*4);
             break;
         case FrameEnd:
+            if (iFramesCount % 500 == 0) qDebug("PASS 1 : frame %d",iFramesCount);
             iFramesCount++;
             break;
         case TileSet:
@@ -243,7 +247,6 @@ void MainWindow::on_pushButton_clicked()
             qDebug("Unknown opcode at index 0x%x: %d, param %d",iParseIndex, Command_Opcode, Command_Param);
             break;
         }
-        if (iFramesCount % 500 == 0) qDebug("PASS 1 : frame %d",iFramesCount);
     }
 
     //--------------- PASS 1 done
@@ -267,6 +270,7 @@ void MainWindow::on_pushButton_clicked()
     //int Stream_bytes[iFramesCount];
     QVector<uint8_t> Stream_bytes;
     Stream_bytes.resize(iFramesCount);
+    Tiles.clear();
     Tiles.resize(iTilesCount);
 
     iLastOpcode=0;
@@ -279,8 +283,9 @@ void MainWindow::on_pushButton_clicked()
         for (int tile=0;tile<TILES_MAX;tile++)
             iTilesUsage[frame][tile]=0;*/
 
-    //--------------- PASS 2 - loading palettes and tiles, getting tiles usage
+    //--------------- PASS 2 - loading tiles, getting tiles usage
 
+    int iPaletteBlocks = 0;
     for (int frame=0;frame<iFramesCount;frame++)
     {
         Stream_bytes[frame]=0;
@@ -294,12 +299,14 @@ void MainWindow::on_pushButton_clicked()
             {
                 iCurrentOpcodeBlock = LoadPalette;
                 iCurrentOpcodeBlockCount=0;
-                qDebug("LoadPalette block started at index 0x%x", iParseIndex);
+                iPaletteBlocks++;
+                //qDebug("LoadPalette block started at index 0x%x", iParseIndex);
             }
             if ((Command_Opcode != LoadPalette) && (iCurrentOpcodeBlock == LoadPalette))
             {
                 iCurrentOpcodeBlock = -1;
-                qDebug("LoadPalette block ended at index 0x%x, number of entries = %i", iParseIndex, iCurrentOpcodeBlockCount);
+                if (128 != iCurrentOpcodeBlockCount)
+                    qDebug("LoadPalette block ended at index 0x%x, number of entries = %i", iParseIndex, iCurrentOpcodeBlockCount);
             }
             iCurrentOpcodeBlockCount++;
             iParseIndex+=2;
@@ -398,79 +405,8 @@ void MainWindow::on_pushButton_clicked()
                 break;
             case ShortBlendTileIdx:
                 qDebug("ShortBlendTileIdx at index 0x%x is unsupported", iParseIndex);
-                //dunno what to do with this, keep as normal tile for now
-                iCurrentPalette = Command_Param>>2;
-                iMirrorFlags = Command_Param & 0x03;
-                iCurrentTile = _get_short_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=2;
-                Stream_bytes[frame]+=2;
-                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=2;
-                Stream_bytes[frame]+=2;
-                iTilesUsage[frame][iCurrentTile] = 1;
-                //draw the tile at X,Y
-                /*for (int x=0;x<8;x++)
-                {
-                    for (int y=0;y<8;y++)
-                    {
-                        switch(iMirrorFlags)
-                        {
-                        case 0:
-                            index = Tiles.at(iCurrentTile).at(x+y*8);
-                            break;
-                        case 1:
-                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                            break;
-                        case 2:
-                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                            break;
-                        case 3:
-                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                            break;
-                        }
-                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
-
-                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
-                    }
-                }
-                switch (iMirrorFlags)
-                {
-                case 0:
-                    //out_file.write(QByteArray(1,0x00));
-                    break;
-                case 1:
-                    //out_file.write(QByteArray(1,0x40));
-                    break;
-                case 2:
-                    //out_file.write(QByteArray(1,0x80));
-                    break;
-                case 3:
-                    //out_file.write(QByteArray(1,0xC0));
-                    break;
-                }*/
-
-                c = iCurrentPalette;
-                //out_file.write(QByteArray(1,c));
-                c = (iCurrentTile+0x100)>>8;
-                //out_file.write(QByteArray(1,c));
-                c = iCurrentTile;
-                //out_file.write(QByteArray(1,c));
-                if (iCurrentTile!= 0)
-                    c++;
-                //move to next X,Y
-                for (int i=0;i<=0;i++)
-                {
-                    iCurrentTileX++;
-                    if (iCurrentTileX >= iCanvasSizeX/8)
-                    {
-                        iCurrentTileX = 0;
-                        iCurrentTileY++;
-                        if (iCurrentTileY >= iCanvasSizeY/8)
-                            iCurrentTileY = 0;
-                    }
-                }
+                iParseIndex+=4;
+                Stream_bytes[frame]+=4;
                 break;
             case LongTileIdx:
                 iCurrentPalette = Command_Param>>2;
@@ -545,79 +481,8 @@ void MainWindow::on_pushButton_clicked()
                 break;
             case LongBlendTileIdx:
                 qDebug("LongBlendTileIdx at index 0x%x is unsupported", iParseIndex);
-                //dunno what to do with this, keep as normal tile for now
-                iCurrentPalette = Command_Param>>2;
-                iMirrorFlags = Command_Param & 0x03;
-                iCurrentTile = _get_int_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=4;
-                Stream_bytes[frame]+=4;
-                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=2;
-                Stream_bytes[frame]+=2;
-                iTilesUsage[frame][iCurrentTile] = 1;
-                //draw the tile at X,Y
-                /*for (int x=0;x<8;x++)
-                {
-                    for (int y=0;y<8;y++)
-                    {
-                        switch(iMirrorFlags)
-                        {
-                        case 0:
-                            index = Tiles.at(iCurrentTile).at(x+y*8);
-                            break;
-                        case 1:
-                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                            break;
-                        case 2:
-                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                            break;
-                        case 3:
-                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                            break;
-                        }
-                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
-
-                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
-                    }
-                }
-                switch (iMirrorFlags)
-                {
-                case 0:
-                    //out_file.write(QByteArray(1,0x00));
-                    break;
-                case 1:
-                    //out_file.write(QByteArray(1,0x40));
-                    break;
-                case 2:
-                    //out_file.write(QByteArray(1,0x80));
-                    break;
-                case 3:
-                    //out_file.write(QByteArray(1,0xC0));
-                    break;
-                }*/
-
-                c = iCurrentPalette;
-                //out_file.write(QByteArray(1,c));
-                c = (iCurrentTile+0x100)>>8;
-                //out_file.write(QByteArray(1,c));
-                c = iCurrentTile;
-                //out_file.write(QByteArray(1,c));
-                if (iCurrentTile!= 0)
-                    c++;
-                //move to next X,Y
-                for (int i=0;i<=0;i++)
-                {
-                    iCurrentTileX++;
-                    if (iCurrentTileX >= iCanvasSizeX/8)
-                    {
-                        iCurrentTileX = 0;
-                        iCurrentTileY++;
-                        if (iCurrentTileY >= iCanvasSizeY/8)
-                            iCurrentTileY = 0;
-                    }
-                }
+                iParseIndex+=6;
+                Stream_bytes[frame]+=6;
                 break;
             case ShortAddlBlendTileIdx:
                 qDebug("ShortAddlBlendTileIdx at index 0x%x is unsupported", iParseIndex);
@@ -656,23 +521,23 @@ void MainWindow::on_pushButton_clicked()
                 {
                     qDebug("Wrong palette format at index 0x%x : %d", iParseIndex, iCurrentPaletteFormat);
                 }
-                while (Palettes.size() <= iCurrentPalette)
+                /*while (Palettes.size() <= iCurrentPalette)
                     Palettes.append(QByteArray());
                 Palettes[iCurrentPalette].clear();
-                Palettes[iCurrentPalette].append(_stream_data.mid(iParseIndex,Palette_Size*4));
+                Palettes[iCurrentPalette].append(_stream_data.mid(iParseIndex,Palette_Size*4));*/
                 iParseIndex+=(Palette_Size*4);
                 Stream_bytes[frame]+=(Palette_Size*4);
                 //out_file.write(QByteArray(1,0x03));
                 //out_file.write(QByteArray(1,0x00));
                 //out_file.write(QByteArray(1,0x00));
                 //out_file.write(QByteArray(1,iCurrentPalette));
-                for (int i=0;i<16;i++)
+                /*for (int i=0;i<16;i++)
                 {
                     c = 0x00 | (((Palettes[iCurrentPalette][i*4+2]) >> 3) << 2)  | ((Palettes[iCurrentPalette][i*4+1] >> 3) >> 3);
                     //out_file.write(QByteArray(1,c));
                     c = (((Palettes[iCurrentPalette][i*4+1]) >> 3) << 5)  | ((Palettes[iCurrentPalette][i*4] >> 3));
                     //out_file.write(QByteArray(1,c));
-                }
+                }*/
                 break;
             case FrameEnd:
                 bFrameEnd = true;
@@ -692,13 +557,13 @@ void MainWindow::on_pushButton_clicked()
                 qDebug("TileSet block, setting tiles from %i to %i", iTilesStart, iTilesEnd);
                 for (int i=iTilesStart;i<=iTilesEnd;i++)
                 {
-                    while (Tiles.size() <= i)
+                    /*while (Tiles.size() <= i)
                     {
                         Tiles.append(QByteArray(64,0));
-                    }
+                    }*/
                     Tiles[i].clear();
-                    for (int i=0;i<32;i++)
-                        Tiles[i].append( (_stream_data[iParseIndex+i*2]<<4) | (_stream_data[iParseIndex+i*2+1]) );
+                    for (int j=0;j<32;j++)
+                        Tiles[i].append( (_stream_data[iParseIndex+j*2]<<4) | (_stream_data[iParseIndex+j*2+1]) );
                     //Tiles[i].append(_stream_data.mid(iParseIndex,64));
                     iParseIndex+=64;
                     //Stream_bytes[frame]+=64; //tiles are not counted in stream
@@ -762,7 +627,7 @@ void MainWindow::on_pushButton_clicked()
                 }
             }
         }
-        if (tile % 50000 == 0) qDebug("GLUEING : tile %d",tile);
+        if (tile % 25000 == 0) qDebug("GLUEING : tile %d",tile);
     }
     qDebug("Glueing done");
 
@@ -790,31 +655,20 @@ void MainWindow::on_pushButton_clicked()
     //saving chunks
     QByteArray chunk_header_tiles;
     QByteArray chunk_data_tiles;
-    QByteArray chunk_header_commands;
-    QByteArray chunk_data_commands;
-    QByteArray chunk_header_palettes;
-    QByteArray chunk_data_palettes;
+    QByteArray chunk_commands;
+    QByteArray chunk_palettes;
     //VRAM is 512 kB, tilemap is 64*128*4 = 32 kB, remaining 480k = 15360 tiles
     QVector<int> TilesVRAMUsage;
     TilesVRAMUsage.fill(0,15360);
     QByteArray header_magic_tiles;
     QByteArray header_magic_palettes;
     QByteArray header_magic_commands;
-    header_magic_tiles.append(QByteArray(1,0xDE));
-    header_magic_tiles.append(QByteArray(1,0xAF));
-    header_magic_tiles.append(QByteArray(1,0xFA));
-    header_magic_tiles.append(QByteArray(1,0xCE));
-    header_magic_palettes.append(QByteArray(1,0xBE));
-    header_magic_palettes.append(QByteArray(1,0xEF));
-    header_magic_palettes.append(QByteArray(1,0xDE));
-    header_magic_palettes.append(QByteArray(1,0xAD));
-    header_magic_commands.append(QByteArray(1,0xCA));
-    header_magic_commands.append(QByteArray(1,0xCA));
-    header_magic_commands.append(QByteArray(1,0xDE));
-    header_magic_commands.append(QByteArray(1,0xFE));
+    header_magic_tiles.append(QByteArray("TILE"));
+    header_magic_palettes.append(QByteArray("PALE"));
+    header_magic_commands.append(QByteArray("CMDS"));
 
     //tiles format : 128 bytes header (4 magic, 120 data, 2 dummy), 2048-128 = 60*32 bytes data
-    //palettes format : 4 bytes header (4 magic), 2048-4 compressed data
+    //palettes format : 4 bytes header (4 magic), 2048-4 palette data
     //commands format : 4 bytes header (4 magic), 2048-4 command data
 
     iLastOpcode=0;
@@ -833,6 +687,8 @@ void MainWindow::on_pushButton_clicked()
                     TilesVRAMUsage[TilesVRAMUsage.indexOf(tile)] = 0;
             }
         }
+        chunk_header_tiles.clear();
+        chunk_data_tiles.clear();
         chunk_header_tiles.append(header_magic_tiles);
         if (frame == 0)
         {
@@ -852,10 +708,15 @@ void MainWindow::on_pushButton_clicked()
                         chunk_header_tiles.append(QByteArray(128-chunk_header_tiles.size(),0));
                         //chunk_data.append(QByteArray(2048-128-chunk_data.size(),0));
                         assert(chunk_header_tiles.size()+chunk_data_tiles.size() == 2048);
+                        /*if (chunk_header_tiles.size()+chunk_data_tiles.size() != 2048)
+                        {
+                            chunk_data_tiles.append("FUCK");
+                        }*/
                         out_file.write(chunk_header_tiles);
                         out_file.write(chunk_data_tiles);
                         chunk_header_tiles.clear();
                         chunk_data_tiles.clear();
+                        chunk_header_tiles.append(header_magic_tiles);
                     }
                 }
             }
@@ -869,8 +730,6 @@ void MainWindow::on_pushButton_clicked()
                 {
                     int location = TilesVRAMUsage.indexOf(0);
                     TilesVRAMUsage[location] = tile;
-                    chunk_header_tiles.append(QByteArray(1,0));
-                    chunk_header_tiles.append(QByteArray(1,1));//1 = tile data
                     chunk_header_tiles.append(QByteArray(1,tile>>8));
                     chunk_header_tiles.append(QByteArray(1,tile));
                     chunk_data_tiles.append(Tiles[tile]);
@@ -880,10 +739,15 @@ void MainWindow::on_pushButton_clicked()
                         chunk_header_tiles.append(QByteArray(128-chunk_header_tiles.size(),0));
                         //chunk_data.append(QByteArray(2048-128-chunk_data.size(),0));
                         assert(chunk_header_tiles.size()+chunk_data_tiles.size() == 2048);
+                        /*if (chunk_header_tiles.size()+chunk_data_tiles.size() != 2048)
+                        {
+                            chunk_data_tiles.append("FUCK");
+                        }*/
                         out_file.write(chunk_header_tiles);
                         out_file.write(chunk_data_tiles);
                         chunk_header_tiles.clear();
                         chunk_data_tiles.clear();
+                        chunk_header_tiles.append(header_magic_tiles);
                     }
                 }
             }
@@ -895,16 +759,21 @@ void MainWindow::on_pushButton_clicked()
             chunk_data_tiles.append(QByteArray(2048-128-chunk_data_tiles.size(),0));
             out_file.write(chunk_header_tiles);
             out_file.write(chunk_data_tiles);
-            chunk_header_tiles.clear();
-            chunk_data_tiles.clear();
         }
 
-        chunk_header_commands.clear();
-        chunk_data_commands.clear();
-
-        chunk_header_commands.append(header_magic_commands);
+        chunk_commands.clear();
+        chunk_commands.append(header_magic_commands);
+        chunk_palettes.clear();
+        chunk_palettes.append(header_magic_palettes);
 
         //now saving the stream data for the frame, it's either tiles or palettes
+        //commands:
+        // skip block : opcode 01 dummy 00 skip amount SS SS
+        // short tile : opcode 00/40/80/C0 palette PP tile number TT TT
+        //  long tile : opcode 05/45/85/C5 dummy 00 00 palette PP tile number TT TT TT TT
+        //  frame end : opcode 02 dummy 00 00 00
+        //palettes:
+        // usage UU index II palette in RGB555, 16 colors 16 x (PP PP)
         while ((iParseIndex < _stream_data.size()) && (false == bFrameEnd))
         {
             //read next command
@@ -938,10 +807,27 @@ void MainWindow::on_pushButton_clicked()
                             iCurrentTileY = 0;
                     }
                 }
-                out_file.write(QByteArray(1,0x01));
-                out_file.write(QByteArray(1,0x00));
-                out_file.write(QByteArray(1,Command_Param>>8));
-                out_file.write(QByteArray(1,Command_Param));
+                //flush check
+                if (chunk_commands.size() == 2048)
+                {
+                    if (chunk_palettes.size() > 4)
+                    {
+                        //flush palettes chunk
+                        chunk_palettes.append(QByteArray(2048-chunk_palettes.size(),0));
+                        out_file.write(chunk_palettes);
+                        chunk_palettes.clear();
+                        chunk_palettes.append(header_magic_palettes);
+                    }
+                    //flush command chunk
+                    out_file.write(chunk_commands);
+                    chunk_commands.clear();
+                    chunk_commands.append(header_magic_commands);
+                }
+                // skip block : opcode 01 dummy 00 skip amount SS SS
+                chunk_commands.append(QByteArray(1,0x01));
+                chunk_commands.append(QByteArray(1,0x00));
+                chunk_commands.append(QByteArray(1,Command_Param>>8));
+                chunk_commands.append(QByteArray(1,Command_Param));
                 break;
             case ShortTileIdx:
                 iCurrentPalette = Command_Param>>2;
@@ -959,51 +845,67 @@ void MainWindow::on_pushButton_clicked()
                         switch(iMirrorFlags)
                         {
                         case 0:
-                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            uindex8 = Tiles.at(iCurrentTile).at((x+y*8)/2);
+                            if ((x+y*8)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         case 1:
-                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            uindex8 = Tiles.at(iCurrentTile).at((y*8+7-x)/2);
+                            if ((y*8+7-x)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         case 2:
-                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            uindex8 = Tiles.at(iCurrentTile).at((56-y*8+x)/2);
+                            if ((56-y*8+x)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         case 3:
-                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            uindex8 = Tiles.at(iCurrentTile).at((63-y*8-x)/2);
+                            if ((63-y*8-x)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         }
-                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+                        color.setRed((uint8_t)(CurrentPalettes.at(iCurrentPalette).at(uindex8*4)));
+                        color.setGreen((uint8_t)(CurrentPalettes.at(iCurrentPalette).at(uindex8*4+1)));
+                        color.setBlue((uint8_t)(CurrentPalettes.at(iCurrentPalette).at(uindex8*4+2)));
 
                         me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
                     }
                 }
+                //flush check
+                if (chunk_commands.size() == 2048)
+                {
+                    if (chunk_palettes.size() > 4)
+                    {
+                        //flush palettes chunk
+                        chunk_palettes.append(QByteArray(2048-chunk_palettes.size(),0));
+                        out_file.write(chunk_palettes);
+                        chunk_palettes.clear();
+                        chunk_palettes.append(header_magic_palettes);
+                    }
+                    //flush command chunk
+                    out_file.write(chunk_commands);
+                    chunk_commands.clear();
+                    chunk_commands.append(header_magic_commands);
+                }
+                // short tile : opcode 00/40/80/C0 palette PP tile number TT TT
                 switch (iMirrorFlags)
                 {
                 case 0:
-                    out_file.write(QByteArray(1,0x00));
+                    chunk_commands.append(QByteArray(1,0x00));
                     break;
                 case 1:
-                    out_file.write(QByteArray(1,0x40));
+                    chunk_commands.append(QByteArray(1,0x40));
                     break;
                 case 2:
-                    out_file.write(QByteArray(1,0x80));
+                    chunk_commands.append(QByteArray(1,0x80));
                     break;
                 case 3:
-                    out_file.write(QByteArray(1,0xC0));
+                    chunk_commands.append(QByteArray(1,0xC0));
                     break;
                 }
-
-                //c = iMirrorFlags<<6;
-                //out_file.write(QByteArray(1,c));
                 c = iCurrentPalette;
-                out_file.write(QByteArray(1,c));
-                c = (iCurrentTile+0x100)>>8;
-                out_file.write(QByteArray(1,c));
+                chunk_commands.append(QByteArray(1,c));
+                c = (iCurrentTile)>>8;
+                chunk_commands.append(QByteArray(1,c));
                 c = iCurrentTile;
-                out_file.write(QByteArray(1,c));
-                if (iCurrentTile!= 0)
-                    c++;
+                chunk_commands.append(QByteArray(1,c));
                 //move to next X,Y
                 for (int i=0;i<=0;i++)
                 {
@@ -1019,77 +921,7 @@ void MainWindow::on_pushButton_clicked()
                 break;
             case ShortBlendTileIdx:
                 qDebug("ShortBlendTileIdx at index 0x%x is unsupported", iParseIndex);
-                //dunno what to do with this, keep as normal tile for now
-                iCurrentPalette = Command_Param>>2;
-                iMirrorFlags = Command_Param & 0x03;
-                iCurrentTile = _get_short_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=2;
-                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=2;
-                iTilesUsage[frame][iCurrentTile] = 1;
-                //draw the tile at X,Y
-                for (int x=0;x<8;x++)
-                {
-                    for (int y=0;y<8;y++)
-                    {
-                        switch(iMirrorFlags)
-                        {
-                        case 0:
-                            index = Tiles.at(iCurrentTile).at(x+y*8);
-                            break;
-                        case 1:
-                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                            break;
-                        case 2:
-                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                            break;
-                        case 3:
-                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                            break;
-                        }
-                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
-
-                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
-                    }
-                }
-                switch (iMirrorFlags)
-                {
-                case 0:
-                    out_file.write(QByteArray(1,0x00));
-                    break;
-                case 1:
-                    out_file.write(QByteArray(1,0x40));
-                    break;
-                case 2:
-                    out_file.write(QByteArray(1,0x80));
-                    break;
-                case 3:
-                    out_file.write(QByteArray(1,0xC0));
-                    break;
-                }
-
-                c = iCurrentPalette;
-                out_file.write(QByteArray(1,c));
-                c = (iCurrentTile+0x100)>>8;
-                out_file.write(QByteArray(1,c));
-                c = iCurrentTile;
-                out_file.write(QByteArray(1,c));
-                if (iCurrentTile!= 0)
-                    c++;
-                //move to next X,Y
-                for (int i=0;i<=0;i++)
-                {
-                    iCurrentTileX++;
-                    if (iCurrentTileX >= iCanvasSizeX/8)
-                    {
-                        iCurrentTileX = 0;
-                        iCurrentTileY++;
-                        if (iCurrentTileY >= iCanvasSizeY/8)
-                            iCurrentTileY = 0;
-                    }
-                }
+                iParseIndex+=4;
                 break;
             case LongTileIdx:
                 iCurrentPalette = Command_Param>>2;
@@ -1105,49 +937,73 @@ void MainWindow::on_pushButton_clicked()
                         switch(iMirrorFlags)
                         {
                         case 0:
-                            index = Tiles.at(iCurrentTile).at(x+y*8);
+                            uindex8 = Tiles.at(iCurrentTile).at((x+y*8)/2);
+                            if ((x+y*8)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         case 1:
-                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
+                            uindex8 = Tiles.at(iCurrentTile).at((y*8+7-x)/2);
+                            if ((y*8+7-x)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         case 2:
-                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
+                            uindex8 = Tiles.at(iCurrentTile).at((56-y*8+x)/2);
+                            if ((56-y*8+x)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         case 3:
-                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
+                            uindex8 = Tiles.at(iCurrentTile).at((63-y*8-x)/2);
+                            if ((63-y*8-x)%2) uindex8 &= 0x0F; else uindex8 >>= 4;
                             break;
                         }
-                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
+                        color.setRed((uint8_t)(CurrentPalettes.at(iCurrentPalette).at(uindex8*4)));
+                        color.setGreen((uint8_t)(CurrentPalettes.at(iCurrentPalette).at(uindex8*4+1)));
+                        color.setBlue((uint8_t)(CurrentPalettes.at(iCurrentPalette).at(uindex8*4+2)));
 
                         me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
                     }
                 }
+                //flush check
+                if (chunk_commands.size() >= (2048-4))
+                {
+                    if (chunk_palettes.size() > 4)
+                    {
+                        //flush palettes chunk
+                        chunk_palettes.append(QByteArray(2048-chunk_palettes.size(),0));
+                        out_file.write(chunk_palettes);
+                        chunk_palettes.clear();
+                        chunk_palettes.append(header_magic_palettes);
+                    }
+                    //flush command chunk
+                    chunk_commands.append(QByteArray(2048-chunk_commands.size(),0));
+                    out_file.write(chunk_commands);
+                    chunk_commands.clear();
+                    chunk_commands.append(header_magic_commands);
+                }
+                //  long tile : opcode 05/45/85/C5 dummy 00 00 palette PP tile number TT TT TT TT
                 switch (iMirrorFlags)
                 {
                 case 0:
-                    out_file.write(QByteArray(1,0x00));
+                    chunk_commands.append(QByteArray(1,0x05));
                     break;
                 case 1:
-                    out_file.write(QByteArray(1,0x40));
+                    chunk_commands.append(QByteArray(1,0x45));
                     break;
                 case 2:
-                    out_file.write(QByteArray(1,0x80));
+                    chunk_commands.append(QByteArray(1,0x85));
                     break;
                 case 3:
-                    out_file.write(QByteArray(1,0xC0));
+                    chunk_commands.append(QByteArray(1,0xC5));
                     break;
                 }
-
+                chunk_commands.append(QByteArray(2,0));//dummy
                 c = iCurrentPalette;
-                out_file.write(QByteArray(1,c));
-                c = (iCurrentTile+0x100)>>8;
-                out_file.write(QByteArray(1,c));
+                chunk_commands.append(QByteArray(1,c));
+                c = (iCurrentTile)>>24;
+                chunk_commands.append(QByteArray(1,c));
+                c = (iCurrentTile)>>16;
+                chunk_commands.append(QByteArray(1,c));
+                c = (iCurrentTile)>>8;
+                chunk_commands.append(QByteArray(1,c));
                 c = iCurrentTile;
-                out_file.write(QByteArray(1,c));
-                if (iCurrentTile!= 0)
-                    c++;
+                chunk_commands.append(QByteArray(1,c));
                 //move to next X,Y
                 for (int i=0;i<=0;i++)
                 {
@@ -1163,77 +1019,7 @@ void MainWindow::on_pushButton_clicked()
                 break;
             case LongBlendTileIdx:
                 qDebug("LongBlendTileIdx at index 0x%x is unsupported", iParseIndex);
-                //dunno what to do with this, keep as normal tile for now
-                iCurrentPalette = Command_Param>>2;
-                iMirrorFlags = Command_Param & 0x03;
-                iCurrentTile = _get_int_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=4;
-                //iBlending = _get_short_from_bytearray(&_stream_data,iParseIndex);
-                iParseIndex+=2;
-                iTilesUsage[frame][iCurrentTile] = 1;
-                //draw the tile at X,Y
-                for (int x=0;x<8;x++)
-                {
-                    for (int y=0;y<8;y++)
-                    {
-                        switch(iMirrorFlags)
-                        {
-                        case 0:
-                            index = Tiles.at(iCurrentTile).at(x+y*8);
-                            break;
-                        case 1:
-                            index = Tiles.at(iCurrentTile).at(y*8+7-x);
-                            break;
-                        case 2:
-                            index = Tiles.at(iCurrentTile).at(56-y*8+x);
-                            break;
-                        case 3:
-                            index = Tiles.at(iCurrentTile).at(63-y*8-x);
-                            break;
-                        }
-                        color.setRed((uint8_t)(Palettes.at(iCurrentPalette).at(index*4)));
-                        color.setGreen((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+1)));
-                        color.setBlue((uint8_t)(Palettes.at(iCurrentPalette).at(index*4+2)));
-
-                        me_canvas[iCurrentTileX*8+x][iCurrentTileY*8+y] = color.rgb();
-                    }
-                }
-                switch (iMirrorFlags)
-                {
-                case 0:
-                    out_file.write(QByteArray(1,0x00));
-                    break;
-                case 1:
-                    out_file.write(QByteArray(1,0x40));
-                    break;
-                case 2:
-                    out_file.write(QByteArray(1,0x80));
-                    break;
-                case 3:
-                    out_file.write(QByteArray(1,0xC0));
-                    break;
-                }
-
-                c = iCurrentPalette;
-                out_file.write(QByteArray(1,c));
-                c = (iCurrentTile+0x100)>>8;
-                out_file.write(QByteArray(1,c));
-                c = iCurrentTile;
-                out_file.write(QByteArray(1,c));
-                if (iCurrentTile!= 0)
-                    c++;
-                //move to next X,Y
-                for (int i=0;i<=0;i++)
-                {
-                    iCurrentTileX++;
-                    if (iCurrentTileX >= iCanvasSizeX/8)
-                    {
-                        iCurrentTileX = 0;
-                        iCurrentTileY++;
-                        if (iCurrentTileY >= iCanvasSizeY/8)
-                            iCurrentTileY = 0;
-                    }
-                }
+                iParseIndex+=6;
                 break;
             case ShortAddlBlendTileIdx:
                 qDebug("ShortAddlBlendTileIdx at index 0x%x is unsupported", iParseIndex);
@@ -1266,32 +1052,55 @@ void MainWindow::on_pushButton_clicked()
                 {
                     qDebug("Wrong palette format at index 0x%x : %d", iParseIndex, iCurrentPaletteFormat);
                 }
-                while (Palettes.size() <= iCurrentPalette)
-                    Palettes.append(QByteArray());
-                Palettes[iCurrentPalette].clear();
-                Palettes[iCurrentPalette].append(_stream_data.mid(iParseIndex,Palette_Size*4));
+                CurrentPalettes[iCurrentPalette].clear();
+                CurrentPalettes[iCurrentPalette].append(_stream_data.mid(iParseIndex,Palette_Size*4));
                 iParseIndex+=(Palette_Size*4);
-                out_file.write(QByteArray(1,0x03));
-                out_file.write(QByteArray(1,0x00));
-                out_file.write(QByteArray(1,0x00));
-                out_file.write(QByteArray(1,iCurrentPalette));
+                //is there enough place for palette in buffer?
+                if (chunk_palettes.size()+34 > 2048)
+                {
+                    //flush palettes chunk
+                    chunk_palettes.append(QByteArray(2048-chunk_palettes.size(),0));
+                    out_file.write(chunk_palettes);
+                    chunk_palettes.clear();
+                    chunk_palettes.append(header_magic_palettes);
+                }
+                // usage UU index II palette in RGB555, 16 colors 16 x (PP PP)
+                chunk_palettes.append(QByteArray(1,0x01));//usage
+                chunk_palettes.append(QByteArray(1,iCurrentPalette));//palette number
                 for (int i=0;i<16;i++)
                 {
-                    c = 0x00 | (((Palettes[iCurrentPalette][i*4+2]) >> 3) << 2)  | ((Palettes[iCurrentPalette][i*4+1] >> 3) >> 3);
-                    out_file.write(QByteArray(1,c));
-                    c = (((Palettes[iCurrentPalette][i*4+1]) >> 3) << 5)  | ((Palettes[iCurrentPalette][i*4] >> 3));
-                    out_file.write(QByteArray(1,c));
+                    c = 0x00 | (((CurrentPalettes[iCurrentPalette][i*4+2]) >> 3) << 2)  | ((CurrentPalettes[iCurrentPalette][i*4+1] >> 3) >> 3);
+                    chunk_palettes.append(QByteArray(1,c));
+                    c = (((CurrentPalettes[iCurrentPalette][i*4+1]) >> 3) << 5)  | ((CurrentPalettes[iCurrentPalette][i*4] >> 3));
+                    chunk_palettes.append(QByteArray(1,c));
                 }
                 break;
             case FrameEnd:
                 bFrameEnd = true;
-                out_file.write(QByteArray(1,0x02));
-                out_file.write(QByteArray(1,0x00));
-                out_file.write(QByteArray(1,0x00));
-                out_file.write(QByteArray(1,0x00));
+                //flush check
+                if (chunk_commands.size() == 2048)
+                {
+                    if (chunk_palettes.size() > 4)
+                    {
+                        //flush palettes chunk
+                        chunk_palettes.append(QByteArray(2048-chunk_palettes.size(),0));
+                        out_file.write(chunk_palettes);
+                        chunk_palettes.clear();
+                        chunk_palettes.append(header_magic_palettes);
+                    }
+                    //flush command chunk
+                    out_file.write(chunk_commands);
+                    chunk_commands.clear();
+                    chunk_commands.append(header_magic_commands);
+                }
+                //  frame end : opcode 02 dummy 00 00 00
+                chunk_commands.append(QByteArray(1,0x02));
+                chunk_commands.append(QByteArray(1,0x00));
+                chunk_commands.append(QByteArray(1,0x00));
+                chunk_commands.append(QByteArray(1,0x00));
                 break;
             case TileSet:
-                //loading some tiles!
+                //tiles are already loaded, skipping
                 iTilesStart=_get_int_from_bytearray(&_stream_data,iParseIndex);
                 iParseIndex+=4;
                 iTilesEnd=_get_int_from_bytearray(&_stream_data,iParseIndex);
@@ -1300,7 +1109,7 @@ void MainWindow::on_pushButton_clicked()
                     iParseIndex+=64;
                 break;
             case SetDimensions:
-                // data -> width in tiles (16 bits); height in tiles (16 bits); frame length in nanoseconds (32 bits) (2^32-1: still frame); tile count (32 bits); commandBits -> none
+                //skippping
                 iParseIndex+=12;
                 break;
             case ExtendedCommand:
@@ -1315,7 +1124,22 @@ void MainWindow::on_pushButton_clicked()
             iLastOpcode = Command_Opcode;
         }
 
+        if (chunk_palettes.size() > 4)
+        {
+            //flush palettes chunk
+            chunk_palettes.append(QByteArray(2048-chunk_palettes.size(),0));
+            out_file.write(chunk_palettes);
+            chunk_palettes.clear();
+            chunk_palettes.append(header_magic_palettes);
+        }
+        //flush command chunk
+        chunk_commands.append(QByteArray(2048-chunk_commands.size(),0));
+        out_file.write(chunk_commands);
+        chunk_commands.clear();
+        chunk_commands.append(header_magic_commands);
+
         //go to next frame
+        if (frame % 500 == 0) qDebug("PASS 3 : frame %d",frame);
         bFrameEnd = false;
     }
 
@@ -1362,10 +1186,10 @@ void MainWindow::on_pushButton_clicked()
                 Loads_per_sec[frame]+=Loads[frame-i]*32;
                 Loads_per_sec[frame]+=Stream_bytes[frame-i];
             }
-            if (Loads_per_sec[frame] > 250000)
+            /*if (Loads_per_sec[frame] > 250000)
             {
                 out_file_t.write(QString("Tiles load amount overflow at frame %1, amount %2\r\n").arg(frame).arg(Loads_per_sec[frame]).toLatin1());
-            }
+            }*/
         }
         //calculating tiles to drop for this frame
         int Drop = 0;
