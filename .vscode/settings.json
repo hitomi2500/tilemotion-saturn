@@ -1,5 +1,33 @@
 {
     "files.associations": {
-        "svin.h": "c"
+        "svin.h": "c",
+        "font.h": "c",
+        "stdio.h": "c",
+        "pattern_colorbars.h": "c",
+        "pattern_checkerboard.h": "c",
+        "control.h": "c",
+        "ire.h": "c",
+        "svin_debug.h": "c",
+        "pattern_colorbars_grayscale.h": "c",
+        "pattern_colorbleed.h": "c",
+        "window_credits.h": "c",
+        "video.h": "c",
+        "background.h": "c",
+        "pattern_monoscope.h": "c",
+        "pattern_100ire.h": "c",
+        "pattern_pluge.h": "c",
+        "pattern_whitescreen.h": "c",
+        "pattern_sharpness.h": "c",
+        "pattern_grid.h": "c",
+        "pattern_grayramp.h": "c",
+        "pattern_smpte.h": "c",
+        "videotest_checkerboard.h": "c",
+        "videotest_backlit_zone.h": "c",
+        "videotest_striped_sprite.h": "c",
+        "videotest_dropshadow.h": "c",
+        "videotest_grid_scroll.h": "c",
+        "videotest_hor_vert_stripes.h": "c",
+        "image_buzzbomber.h": "c",
+        "image_big_digits.h": "c"
     }
 }
