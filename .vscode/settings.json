@@ -28,6 +28,7 @@
         "videotest_grid_scroll.h": "c",
         "videotest_hor_vert_stripes.h": "c",
         "image_buzzbomber.h": "c",
-        "image_big_digits.h": "c"
+        "image_big_digits.h": "c",
+        "image_not_really.h": "c"
     }
 }

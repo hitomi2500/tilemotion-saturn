@@ -2,14 +2,6 @@
 #include "image_buzzbomber.h"
 #include "image_not_really.h"
 
-static inline void __always_inline
-vdp1_cmdt_color_mode5_set(vdp1_cmdt_t *cmdt)
-{
-        cmdt->cmd_pmod &= 0xFFC7;
-        cmdt->cmd_pmod |= 0x0028;
-        cmdt->cmd_colr = 0;
-}
-
 void _yaul_early_access()
 {
     //nothing is initialized yet. so we can't use most of the yaul functionality

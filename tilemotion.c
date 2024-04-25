@@ -82,6 +82,8 @@ int main(void)
 	int * p32;
 	int x_size_tiles;
 	int y_size_tiles;
+	int x_shift_tiles;
+	int y_shift_tiles;
 	int frames_number;
 	int fifo_read_index;
 	int current_frame;
@@ -229,6 +231,8 @@ int main(void)
 	p32 = (uint32_t *)pHugeBuffer;
 	x_size_tiles = p32[0]/8;
 	y_size_tiles = p32[1]/8;
+	x_shift_tiles = (44-x_size_tiles)/2;
+	y_shift_tiles = (30-y_size_tiles)/2;
 	frames_number = p32[2];
 	fifo_read_index = 256;//skipping header
 	current_frame = 0;
@@ -236,6 +240,43 @@ int main(void)
 	ClearTextLayer();
 	_svin_frame_count = 0;
 	last_frame_count = _svin_frame_count-2;
+
+	//draw black borders on VDP1 layer
+	vdp1_cmdt_t * _cmd;
+	_cmd = (vdp1_cmdt_t *)VDP1_VRAM(_SVIN_VDP1_ORDER_TEXT_SPRITE_1_INDEX*32);
+	_cmd->cmd_xa = 0;
+    _cmd->cmd_ya = 0;
+    _cmd->cmd_size=((352/8)<<8)|(y_shift_tiles*8);
+
+	_cmd = (vdp1_cmdt_t *)VDP1_VRAM(_SVIN_VDP1_ORDER_TEXT_SPRITE_2_INDEX*32);
+	_cmd->cmd_xa = 0;
+    _cmd->cmd_ya = (y_size_tiles + y_shift_tiles)*8;
+    _cmd->cmd_size=((352/8)<<8)|(240-(y_size_tiles+y_shift_tiles)*8);
+
+	uint16_t *p16_vram;
+	vdp1_vram_partitions_t vdp1_vram_partitions;
+    vdp1_vram_partitions_get(&vdp1_vram_partitions);
+	p16_vram = (uint16_t *)vdp1_vram_partitions.texture_base+0x11800/2;
+	for (int i=0; i<352*32; i++)
+	{
+		p16_vram[i] = 0x8000;
+	}
+
+	//draw fill gauge border
+	for (int i=10; i<111; i++)
+	{
+		p16_vram[352*10+i] = 0xFFFF;
+		p16_vram[352*13+i] = 0xFFFF;
+	}
+	p16_vram[352*10+10] = 0xFFFF;
+	p16_vram[352*11+10] = 0xFFFF;
+	p16_vram[352*12+10] = 0xFFFF;
+	p16_vram[352*13+10] = 0xFFFF;
+	p16_vram[352*10+111] = 0xFFFF;
+	p16_vram[352*11+111] = 0xFFFF;
+	p16_vram[352*12+111] = 0xFFFF;
+	p16_vram[352*13+111] = 0xFFFF;
+
 	
 	while(stream_frame < frames_number)
 	{
@@ -314,7 +355,8 @@ int main(void)
 					}
 					else {
 						//overwrapped, copying to tmp buffer
-						int size1 = fifo_read_index + 34 - CDFS_SECTOR_SIZE;
+						//int size1 = fifo_read_index + 34 - CDFS_SECTOR_SIZE;
+						int size1 = CDFS_SECTOR_SIZE - fifo_read_index;
 						memcpy(tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
 						fifo_read_ptr_new = fifo_read_ptr+1;
 						fifo_read_ptr_new = (fifo_read_ptr_new == fifo_max) ? 0 : fifo_read_ptr_new;
@@ -340,7 +382,7 @@ int main(void)
 					}
 					else {
 						//overwrapped, copying to tmp buffer
-						int size1 = fifo_read_index + 34 - CDFS_SECTOR_SIZE;
+						int size1 = CDFS_SECTOR_SIZE - fifo_read_index;
 						memcpy(tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
 						fifo_read_ptr_new = fifo_read_ptr+1;
 						fifo_read_ptr_new = (fifo_read_ptr_new == fifo_max) ? 0 : fifo_read_ptr_new;
@@ -357,8 +399,8 @@ int main(void)
 				}
 
 				//reading commands
-				current_x = 0;
-				current_y = 0;
+				current_x = x_shift_tiles;
+				current_y = y_shift_tiles;
 				for (int i=0; i<frame_commands; i++)
 				{
 					p8 = (uint8_t *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index]));
@@ -374,7 +416,7 @@ int main(void)
 								if (current_x == x_size_tiles)
 								{
 									current_y++;
-									current_x = 0;
+									current_x = x_shift_tiles;
 								}
 								skip--;
 							}
@@ -392,7 +434,7 @@ int main(void)
 							if (current_x == x_size_tiles)
 							{
 								current_y++;
-								current_x = 0;
+								current_x = x_shift_tiles;
 							}
 							fifo_read_index+=4;
 							stream_offset+=4;
@@ -408,7 +450,7 @@ int main(void)
 							if (current_x == x_size_tiles)
 							{
 								current_y++;
-								current_x = 0;
+								current_x = x_shift_tiles;
 							}
 							fifo_read_index+=4;
 							stream_offset+=4;
@@ -424,7 +466,7 @@ int main(void)
 							if (current_x == x_size_tiles)
 							{
 								current_y++;
-								current_x = 0;
+								current_x = x_shift_tiles;
 							}
 							fifo_read_index+=4;
 							stream_offset+=4;
@@ -440,7 +482,7 @@ int main(void)
 							if (current_x == x_size_tiles)
 							{
 								current_y++;
-								current_x = 0;
+								current_x = x_shift_tiles;
 							}
 							fifo_read_index+=4;
 							stream_offset+=4;
@@ -480,6 +522,9 @@ int main(void)
 				fifo_read_index -= 16;
 			}
 
+			//if (30 == stream_frame)
+			//	while(1);
+
 			stream_frame++;
 		}
 
@@ -489,10 +534,12 @@ int main(void)
 		while(1);*/
 
 		//now filling fifo, but only if there is a place in it, and only on frame 0 and 1
+
+		fifo_fill = get_fifo_fill(fifo_write_ptr,fifo_read_ptr,fifo_max);
+			
 		//while (abs(_svin_frame_count - last_frame_count) < 2)
 		{
-			fifo_fill = get_fifo_fill(fifo_write_ptr,fifo_read_ptr,fifo_max);
-			if (fifo_fill < 10) && ( frames_number - stream_frame > 60 )
+			if ( (fifo_fill < 5) && ( frames_number - stream_frame > 60 ) )
 			{
 				LoadFont();
 				ClearTextLayer();
@@ -540,6 +587,22 @@ int main(void)
 					}
 				}
 			}
+		}
+
+		//ClearText(50,180,20,10);
+		//sprintf(string_buf,"fill = %i",fifo_fill);
+		//DrawString(string_buf, 10, 180, FONT_WHITE);
+
+		//redraw fill gauge
+		for (int i=11; i<11+fifo_fill; i++)
+		{
+			p16_vram[352*11+i] = 0xFFFF;
+			p16_vram[352*12+i] = 0xFFFF;
+		}
+		for (int i=11+fifo_fill; i<111; i++)
+		{
+			p16_vram[352*11+i] = 0x8000;
+			p16_vram[352*12+i] = 0x8000;
 		}
 
 		//if (20==stream_frame)
