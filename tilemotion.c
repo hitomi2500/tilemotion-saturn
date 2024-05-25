@@ -71,6 +71,28 @@ int get_fifo_fill(fifo_write_ptr,fifo_read_ptr,fifo_max)
 	return fill;
 }
 
+void _dma_transfer(int ch, void * src, void * dst, int size)
+{
+	cpu_dmac_channel_wait(ch);
+
+    cpu_dmac_cfg_t cfg = {
+        .channel = ch,
+        .src_mode = CPU_DMAC_SOURCE_INCREMENT,
+        .src = src,
+        .dst_mode = CPU_DMAC_DESTINATION_INCREMENT,
+        .dst = (uint32_t) dst,
+        .len = size,
+        .stride = CPU_DMAC_STRIDE_2_BYTES,
+        .bus_mode = CPU_DMAC_BUS_MODE_BURST,
+        .ihr = NULL,
+        .ihr_work = NULL
+    };
+
+    cpu_dmac_channel_config_set(&cfg);
+    cpu_dmac_channel_start(ch);
+    cpu_dmac_channel_wait(ch);
+}
+
 int main(void)
 {
 	int sel = 0;
@@ -104,7 +126,7 @@ int main(void)
 	int skip;
 	int stream_frame;
 	int stream_offset;
-	int last_frame_count;
+	int last_rendered_frame;
 	int fifo_write_ptr;
 	int fifo_read_ptr;
 	int fifo_write_ptr_new;
@@ -209,19 +231,20 @@ int main(void)
 	fifo_write_ptr_new = 0;
 	fifo_read_ptr_new = 0;
 	fifo_max = 0xC0000 / CDFS_SECTOR_SIZE;
-	while (fifo_write_ptr < ((fifo_max*5)/10))
+	cpu_dmac_enable();
+	while (get_fifo_fill(fifo_write_ptr,fifo_read_ptr,fifo_max)<90)
 	{
 		sectors_ready = cd_block_cmd_sector_number_get(0);
 		if (sectors_ready > 0)
 		{
 			//reading only 1 sector at the moment
-			if (0 == cd_block_transfer_data(0, 0, &(pHugeBuffer[fifo_write_ptr*CDFS_SECTOR_SIZE]), CDFS_SECTOR_SIZE))
+			if (0 == cd_block_transfer_data_dmac(0, 0, &(pHugeBuffer[fifo_write_ptr*CDFS_SECTOR_SIZE]), CDFS_SECTOR_SIZE, 0))
 			{
 				fifo_write_ptr++;
 			}
 			else
 			{
-				DrawString("cd_block_transfer_data error", 10, 40, FONT_GREEN);
+				DrawString("cd_block_transfer_data_dmac error", 10, 40, FONT_GREEN);
 			}
 		}
 	}
@@ -239,7 +262,7 @@ int main(void)
 
 	ClearTextLayer();
 	_svin_frame_count = 0;
-	last_frame_count = _svin_frame_count-2;
+	last_rendered_frame = -1;
 
 	//draw black borders on VDP1 layer
 	vdp1_cmdt_t * _cmd;
@@ -280,9 +303,10 @@ int main(void)
 	
 	while(stream_frame < frames_number)
 	{
-		if ( _svin_frame_count - last_frame_count > 1)
+		//if ( _svin_frame_count - last_frame_count > 2)
+		if ( ( _svin_frame_count % 3 == 0) && (_svin_frame_count != last_rendered_frame) )
 		{
-			last_frame_count = _svin_frame_count;
+			last_rendered_frame = _svin_frame_count;
 			/*{
 				fifo_fill = get_fifo_fill(fifo_write_ptr,fifo_read_ptr,fifo_max);
 				LoadFont();
@@ -358,6 +382,7 @@ int main(void)
 						//int size1 = fifo_read_index + 34 - CDFS_SECTOR_SIZE;
 						int size1 = CDFS_SECTOR_SIZE - fifo_read_index;
 						memcpy(tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
+						//_dma_transfer(1, tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
 						fifo_read_ptr_new = fifo_read_ptr+1;
 						fifo_read_ptr_new = (fifo_read_ptr_new == fifo_max) ? 0 : fifo_read_ptr_new;
 						fifo_read_ptr = fifo_read_ptr_new;
@@ -365,11 +390,13 @@ int main(void)
 						stream_offset+=34;
 						fifo_read_index-=CDFS_SECTOR_SIZE;
 						memcpy(&(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
+						//scu_dma_transfer(0, &(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
 						p16 = (uint16_t *)tmp_buf;
 					}
 					tile_index = p16[0];
 					p16_tile = (uint16_t *)(_SVIN_NBG0_CHPNDR_START+tile_index*32);
 					memcpy(p16_tile,&(p16[1]),32);
+					//scu_dma_transfer(0,p16_tile,&(p16[1]),32);
 				}
 
 				//reading palettes
@@ -384,6 +411,7 @@ int main(void)
 						//overwrapped, copying to tmp buffer
 						int size1 = CDFS_SECTOR_SIZE - fifo_read_index;
 						memcpy(tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
+						//_dma_transfer(1, tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
 						fifo_read_ptr_new = fifo_read_ptr+1;
 						fifo_read_ptr_new = (fifo_read_ptr_new == fifo_max) ? 0 : fifo_read_ptr_new;
 						fifo_read_ptr = fifo_read_ptr_new;
@@ -391,11 +419,13 @@ int main(void)
 						stream_offset+=34;
 						fifo_read_index-=CDFS_SECTOR_SIZE;
 						memcpy(&(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
+						//scu_dma_transfer(0, &(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
 						p16 = (uint16_t *)tmp_buf;
 					}
 					palette_index = p16[0]&0xFF;
 					p16_palette = (uint16_t *)((VDP2_CRAM_ADDR(palette_index*16)));
 					memcpy(p16_palette,&(p16[1]),32);
+					//scu_dma_transfer(0, p16_palette,&(p16[1]),32);
 				}
 
 				//reading commands
@@ -539,7 +569,7 @@ int main(void)
 			
 		//while (abs(_svin_frame_count - last_frame_count) < 2)
 		{
-			if ( (fifo_fill < 5) && ( frames_number - stream_frame > 60 ) )
+			if ( (fifo_fill < 2) && ( frames_number - stream_frame > 60 ) )
 			{
 				LoadFont();
 				ClearTextLayer();
@@ -547,11 +577,11 @@ int main(void)
 				DrawString(string_buf, 10, 50, FONT_WHITE);
 				sprintf(string_buf,"low fill at frame = %i stream=%x _sfc=%i",stream_frame,stream_offset,_svin_frame_count);
 				DrawString(string_buf, 10, 60, FONT_WHITE);
-				sprintf(string_buf,"_svin_frame_count = %i last_frame_count=%i",_svin_frame_count,last_frame_count);
+				sprintf(string_buf,"_svin_frame_count = %i last_rend_frame=%i",_svin_frame_count,last_rendered_frame);
 				DrawString(string_buf, 10, 70, FONT_WHITE);
 				while(1);	
 			}
-			if (fifo_fill > 95)
+			if (fifo_fill > 98)
 			{
 				LoadFont();
 				ClearTextLayer();
@@ -559,11 +589,11 @@ int main(void)
 				DrawString(string_buf, 10, 50, FONT_WHITE);
 				sprintf(string_buf,"high fill at frame = %i stream=%x _sfc=%i",stream_frame,stream_offset,_svin_frame_count);
 				DrawString(string_buf, 10, 60, FONT_WHITE);
-				sprintf(string_buf,"_svin_frame_count = %i last_frame_count=%i",_svin_frame_count,last_frame_count);
+				sprintf(string_buf,"_svin_frame_count = %i last_rend_frame=%i",_svin_frame_count,last_rendered_frame);
 				DrawString(string_buf, 10, 70, FONT_WHITE);
 				while(1);	
 			}
-			if (fifo_fill < 95)
+			if (fifo_fill < 98)
 			{
 				fifo_write_ptr_new = fifo_write_ptr + 1;
 				fifo_write_ptr_new = (fifo_write_ptr_new >= fifo_max) ? fifo_write_ptr_new-fifo_max : fifo_write_ptr_new;
@@ -573,7 +603,7 @@ int main(void)
 					if (sectors_ready > 0)
 					{
 						//reading only 1 sector at the moment
-						if (0 == cd_block_transfer_data(0, 0, &(pHugeBuffer[fifo_write_ptr_new*CDFS_SECTOR_SIZE]), CDFS_SECTOR_SIZE))
+						if (0 == cd_block_transfer_data_dmac(0, 0, &(pHugeBuffer[fifo_write_ptr_new*CDFS_SECTOR_SIZE]), CDFS_SECTOR_SIZE, 0))
 						{
 							fifo_write_ptr = fifo_write_ptr_new;
 						}
@@ -581,7 +611,7 @@ int main(void)
 						{
 							LoadFont();
 							ClearTextLayer();
-							DrawString("cd_block_transfer_data error", 10, 40, FONT_GREEN);
+							DrawString("cd_block_transfer_data_dmac error", 10, 40, FONT_GREEN);
 							while(1);
 						}				
 					}
