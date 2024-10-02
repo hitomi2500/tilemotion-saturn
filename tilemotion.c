@@ -71,7 +71,10 @@ int get_fifo_fill(fifo_write_ptr,fifo_read_ptr,fifo_max)
 	return fill;
 }
 
-void _dma_transfer(int ch, void * src, void * dst, int size)
+#define MEMCPY_32_FAST(x,y) {x[0]=y[0];x[1]=y[1];x[2]=y[2];x[3]=y[3];x[4]=y[4];x[5]=y[5];x[6]=y[6];x[7]=y[7];\
+							 x[8]=y[8];x[9]=y[9];x[10]=y[10];x[11]=y[11];x[12]=y[12];x[13]=y[13];x[14]=y[14];x[15]=y[15];}
+
+/*void _dma_transfer(int ch, void * src, void * dst, int size)
 {
 	cpu_dmac_channel_wait(ch);
 
@@ -91,7 +94,7 @@ void _dma_transfer(int ch, void * src, void * dst, int size)
     cpu_dmac_channel_config_set(&cfg);
     cpu_dmac_channel_start(ch);
     cpu_dmac_channel_wait(ch);
-}
+}*/
 
 int main(void)
 {
@@ -116,9 +119,14 @@ int main(void)
 
 	uint16_t * p16;
 	uint16_t * p16_tile;
+	uint32_t * p32_tile;
+	uint16_t * p16_src;
+	uint32_t * p32_src;
 	uint16_t * p16_palette;
+	uint32_t * p32_palette;
 	uint8_t * p8;
-	uint8_t tmp_buf[256];
+	uint8_t * tmp_buf;
+	uint8_t * tmp_buf_unaligned;
 	uint16_t tile_index;
 	uint16_t palette_index;
 	int current_x;
@@ -135,6 +143,9 @@ int main(void)
 	int sectors_ready;
 	uint8_t * pHugeBuffer;
 	int fifo_fill;
+
+	tmp_buf_unaligned = malloc(2048+16);
+	tmp_buf = (uint8_t *)((((int)tmp_buf_unaligned - 1)/16 + 1)*16);
 
 	_svin_screen_mode_t screenMode =
 	{
@@ -382,7 +393,8 @@ int main(void)
 						//int size1 = fifo_read_index + 34 - CDFS_SECTOR_SIZE;
 						int size1 = CDFS_SECTOR_SIZE - fifo_read_index;
 						memcpy(tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
-						//_dma_transfer(1, tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
+						//cpu_dmac_transfer_wait(1);
+						//cpu_dmac_transfer(1, tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
 						fifo_read_ptr_new = fifo_read_ptr+1;
 						fifo_read_ptr_new = (fifo_read_ptr_new == fifo_max) ? 0 : fifo_read_ptr_new;
 						fifo_read_ptr = fifo_read_ptr_new;
@@ -390,13 +402,15 @@ int main(void)
 						stream_offset+=34;
 						fifo_read_index-=CDFS_SECTOR_SIZE;
 						memcpy(&(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
-						//scu_dma_transfer(0, &(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
+						//cpu_dmac_transfer(0, &(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
 						p16 = (uint16_t *)tmp_buf;
 					}
 					tile_index = p16[0];
 					p16_tile = (uint16_t *)(_SVIN_NBG0_CHPNDR_START+tile_index*32);
-					memcpy(p16_tile,&(p16[1]),32);
-					//scu_dma_transfer(0,p16_tile,&(p16[1]),32);
+					//memcpy(p16_tile,&(p16[1]),32);
+					p16_src = (uint16_t *)&(p16[1]);
+					MEMCPY_32_FAST(p16_tile,p16_src);
+					//cpu_dmac_transfer(0,p16_tile,&(p16[1]),32);
 				}
 
 				//reading palettes
@@ -411,7 +425,8 @@ int main(void)
 						//overwrapped, copying to tmp buffer
 						int size1 = CDFS_SECTOR_SIZE - fifo_read_index;
 						memcpy(tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
-						//_dma_transfer(1, tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
+						//cpu_dmac_transfer_wait(1);
+						//cpu_dmac_transfer(1,tmp_buf,(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE+fifo_read_index])),size1);
 						fifo_read_ptr_new = fifo_read_ptr+1;
 						fifo_read_ptr_new = (fifo_read_ptr_new == fifo_max) ? 0 : fifo_read_ptr_new;
 						fifo_read_ptr = fifo_read_ptr_new;
@@ -419,13 +434,16 @@ int main(void)
 						stream_offset+=34;
 						fifo_read_index-=CDFS_SECTOR_SIZE;
 						memcpy(&(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
-						//scu_dma_transfer(0, &(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
+						//cpu_dmac_transfer_wait(0);
+						//cpu_dmac_transfer(0, &(tmp_buf[size1]),(int *)(&(pHugeBuffer[fifo_read_ptr*CDFS_SECTOR_SIZE])),34-size1);
 						p16 = (uint16_t *)tmp_buf;
 					}
 					palette_index = p16[0]&0xFF;
 					p16_palette = (uint16_t *)((VDP2_CRAM_ADDR(palette_index*16)));
-					memcpy(p16_palette,&(p16[1]),32);
-					//scu_dma_transfer(0, p16_palette,&(p16[1]),32);
+					//memcpy(p16_palette,&(p16[1]),32);
+					p16_src = (uint16_t *)&(p16[1]);
+					MEMCPY_32_FAST(p16_palette,p16_src);
+					//cpu_dmac_transfer(0, p16_palette,&(p16[1]),32);
 				}
 
 				//reading commands
